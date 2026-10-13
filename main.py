@@ -1,19 +1,30 @@
 # -*- coding: utf-8 -*-
+"""
+БОТ "ПОРЕЙДИМСЯ"
+Знакомства в стиле RPG. Найди напарника — пройди рейд — проверь резонанс.
+
+Часть 1: Настройки, база данных, модели
+"""
+
 import asyncio
 import logging
 import random
 import datetime
+import re
+import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.client.bot import DefaultBotProperties
-from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, Enum, BigInteger
+from sqlalchemy import (
+    create_engine, Column, Integer, String, Text, Boolean,
+    DateTime, BigInteger, ForeignKey
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select
-import os
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -23,90 +34,188 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     print("❌ Ошибка: BOT_TOKEN не найден в файле .env!")
     exit()
+
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///database.db")
+
+# Константы
+BOT_NAME = "Порейдимся"
+POLICY_URL = "https://telegra.ph/Telegram-bota-Rejd-Serdec-10-05"  # потом обновишь
+SUPPORT_EMAIL = "igor_borysov@mail.ru"
+
+# Тайминги (в секундах)
+TURN_TIMEOUT_SECONDS = 300      # 5 минут на ответ в данже
+SEARCH_MAX_SECONDS = 180        # 3 минуты макс. поиск
+REMATCH_COOLDOWN_MINUTES = 30   # 30 мин после 3 игр подряд
+MAX_PREMIUM_USERS_FIRST_1000 = 1000  # Первые 1000 — «Первопроходец»
+
+# Логирование
 logging.basicConfig(level=logging.INFO)
 
-POLICY_URL = "https://telegra.ph/Telegram-bota-Rejd-Serdec-10-05"
-SUPPORT_EMAIL = "igor_borysov@mail.ru"
-TURN_TIMEOUT_SECONDS = 300
-SEARCH_MAX_SECONDS = 180
-
 # ========== БАЗА ДАННЫХ ==========
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args={"sslmode": "require"})
+# Для Timeweb с SSL. Если SQLite — закомментируй connect_args.
+if DATABASE_URL.startswith("postgresql"):
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args={"sslmode": "require"})
+else:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+
 Base = declarative_base()
 SessionLocal = sessionmaker(bind=engine)
 
+
+# ========== МОДЕЛИ ==========
+
 class User(Base):
+    """Игрок."""
     __tablename__ = "users"
+
     id = Column(Integer, primary_key=True)
     tg_id = Column(BigInteger, unique=True, nullable=False)
     username = Column(String(64), unique=True, nullable=False)
-    class_name = Column(String(64), nullable=False)
+
+    # Персонаж
+    class_name = Column(String(64), nullable=False)  # гибрид (например, "🛡️ Паладин")
     level = Column(Integer, default=1)
     experience = Column(Integer, default=0)
+
+    # Анкета
+    gender = Column(String(20), nullable=True)  # "male" / "female" / "none"
     age = Column(Integer, nullable=True)
     city = Column(String(100), nullable=True)
-    mayak_text = Column(String(200), default="")
-    red_flags = Column(String(300), default="")
-    status = Column(String(20), default="idle")
+    mayak = Column(String(200), default="")       # «Портрет»
+    red_flags = Column(String(300), default="")   # Красные флаги
+
+    # Статус
+    status = Column(String(20), default="idle")   # idle / searching / matched / dungeon
     partner_tg_id = Column(BigInteger, nullable=True)
     is_ready = Column(Boolean, default=False)
-    early_exits = Column(Integer, default=0)
+
+    # Поиск
+    search_started_at = Column(DateTime, nullable=True)
+
+    # Прогресс
     full_dungeons = Column(Integer, default=0)
-    consent_given = Column(Boolean, default=False)
+    early_exits = Column(Integer, default=0)
+
+    # Стрик и ежедневный вход
     last_daily = Column(DateTime, nullable=True)
     daily_streak = Column(Integer, default=0)
-    search_started_at = Column(DateTime, nullable=True)
+
+    # Достижения и звания (хранятся как строка через запятую)
+    achievements = Column(String(500), default="")
+    titles = Column(String(500), default="")
+    active_title = Column(String(100), default="")
+
+    # Согласие
+    consent_given = Column(Boolean, default=False)
+    is_18plus = Column(Boolean, default=False)
+
+    # Метка «Первопроходец»
+    is_pioneer = Column(Boolean, default=False)
+
+    # Даты
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_active = Column(DateTime, default=datetime.datetime.utcnow)
+
 
 class UserTag(Base):
+    """Теги игрока."""
     __tablename__ = "user_tags"
+
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, nullable=False)
     category = Column(String(50), nullable=False)
     tag = Column(String(50), nullable=False)
 
+
 class DungeonSession(Base):
+    """Сессия данжа."""
     __tablename__ = "dungeon_sessions"
+
     id = Column(Integer, primary_key=True)
     player1_tg_id = Column(BigInteger, nullable=False)
     player2_tg_id = Column(BigInteger, nullable=False)
-    theme_key = Column(String(30), default="forest")
-    current_phase = Column(Integer, default=1)
-    current_question = Column(Integer, default=0)
+
+    theme_key = Column(String(30), default="forest")  # ключ темы
+    current_phase = Column(Integer, default=1)        # 1, 2, 3
+    current_question = Column(Integer, default=0)     # номер вопроса внутри фазы
+
+    # Ответы текущего вопроса
     player1_answer = Column(Integer, nullable=True)
     player2_answer = Column(Integer, nullable=True)
     player1_ready = Column(Boolean, default=False)
     player2_ready = Column(Boolean, default=False)
+
+    # Счётчики совпадений по фазам
     phase1_matches = Column(Integer, default=0)
     phase2_matches = Column(Integer, default=0)
     phase3_matches = Column(Integer, default=0)
-    msg_stage = Column(Integer, default=0)
-    player1_msg = Column(String(200), nullable=True)
-    player2_msg = Column(String(200), nullable=True)
-    status = Column(String(20), default="active")
+
+    # Обмен сообщениями (после 2 фазы)
+    msg_stage = Column(Integer, default=0)            # 0 / 1 / 2
+    player1_msg = Column(String(100), nullable=True)
+    player2_msg = Column(String(100), nullable=True)
+
+    # Мини-последствия: какой выбор был в "ключевом" вопросе
+    # Формат: "spared" / "killed" / "avoided" / "took" / "left" / и т.д.
+    flag_early_choice = Column(String(50), nullable=True)
+
+    # Статус
+    status = Column(String(20), default="active")     # active / finished
     last_activity = Column(DateTime, default=datetime.datetime.utcnow)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+
+class Partnership(Base):
+    """Счётчик 'Сыграно вместе' для пар игроков."""
+    __tablename__ = "partnerships"
+
+    id = Column(Integer, primary_key=True)
+    user1_tg_id = Column(BigInteger, nullable=False)
+    user2_tg_id = Column(BigInteger, nullable=False)
+    games_count = Column(Integer, default=0)
+    last_played_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+# Создаём таблицы
 Base.metadata.create_all(engine)
 
-# ========== УРОВНИ ==========
-LEVEL_THRESHOLDS = [(1, 0), (2, 100), (3, 300), (4, 700), (5, 1200)]
+# НА ОДИН ЗАПУСК (когда меняется схема БД). Потом убрать:
+# Base.metadata.drop_all(engine)
+# Base.metadata.create_all(engine)
+
+
+# ========== УТИЛИТЫ ==========
 
 def calculate_level(exp):
+    """Уровень по опыту (20 уровней в стиле D&D)."""
+    thresholds = [
+        (1, 0), (2, 100), (3, 300), (4, 600), (5, 1000),
+        (6, 1600), (7, 2400), (8, 3500), (9, 4900), (10, 6700),
+        (11, 8900), (12, 11600), (13, 14900), (14, 18900), (15, 23700),
+        (16, 29400), (17, 36100), (18, 43900), (19, 53000), (20, 63500),
+    ]
     level = 1
-    for lvl, threshold in LEVEL_THRESHOLDS:
+    for lvl, threshold in thresholds:
         if exp >= threshold:
             level = lvl
     return level
 
+
 def progress_to_next_level(exp):
+    """Возвращает (опыт_в_уровне, нужно_до_следующего)."""
+    thresholds = [
+        (1, 0), (2, 100), (3, 300), (4, 600), (5, 1000),
+        (6, 1600), (7, 2400), (8, 3500), (9, 4900), (10, 6700),
+        (11, 8900), (12, 11600), (13, 14900), (14, 18900), (15, 23700),
+        (16, 29400), (17, 36100), (18, 43900), (19, 53000), (20, 63500),
+    ]
     current_level = calculate_level(exp)
-    if current_level >= 5:
+    if current_level >= 20:
         return (exp, exp)
-    next_threshold = None
+
     current_threshold = 0
-    for lvl, th in LEVEL_THRESHOLDS:
+    next_threshold = exp
+    for lvl, th in thresholds:
         if lvl == current_level:
             current_threshold = th
         if lvl == current_level + 1:
@@ -114,154 +223,43 @@ def progress_to_next_level(exp):
             break
     return (exp - current_threshold, next_threshold - current_threshold)
 
+
 def progress_bar(current, total, length=8):
+    """Визуальный прогресс-бар."""
     if total <= 0:
         return "▰" * length
     filled = int((current / total) * length)
     filled = max(0, min(length, filled))
     return "▰" * filled + "▱" * (length - filled)
 
-# ========== КРАСНЫЕ ФЛАГИ ==========
-RED_FLAGS = [
-    "🚬 Курение",
-    "🍷 Алкоголь",
-    "🎮 Компьютерные игры (много)",
-    "📚 Саморазвитие (фанатичное)",
-    "🗣️ Постоянные голосовые",
-    "📵 Долгие ответы",
-    "🎉 Сверхобщительность",
-    "🤐 Замкнутость",
-]
 
-def red_flags_kb(selected):
-    rows = []
-    for i, t in enumerate(RED_FLAGS):
-        mark = "✅ " if i in selected else ""
-        rows.append([InlineKeyboardButton(text=f"{mark}{t}", callback_data=f"rf_{i}")])
-    rows.append([InlineKeyboardButton(text=f"✔️ Готово ({len(selected)}/3)", callback_data="rf_done")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+def contains_link(text):
+    """Проверяет текст на ссылки, упоминания, домены."""
+    if not text:
+        return False
+    patterns = [
+        r"https?://",           # http/https
+        r"www\.",               # www.
+        r"t\.me/",              # t.me/
+        r"telegram\.me/",       # telegram.me/
+        r"@\w+",                # @username
+        r"\.(com|ru|net|org|io|me|info|biz|xyz|site|online)\b",  # домены
+    ]
+    for pat in patterns:
+        if re.search(pat, text, re.IGNORECASE):
+            return True
+    return False
 
-# ========== КЛАВИАТУРЫ ==========
-def consent_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Согласен", callback_data="consent_yes")],
-        [InlineKeyboardButton(text="📄 Политика конфиденциальности", url=POLICY_URL)],
-        [InlineKeyboardButton(text="❌ Не согласен", callback_data="consent_no")]
-    ])
 
-def main_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📜 Моя анкета", callback_data="profile")],
-        [InlineKeyboardButton(text="⚔️ Искать напарника", callback_data="find_match")],
-        [InlineKeyboardButton(text="📝 Редактировать анкету", callback_data="edit_profile")]
-    ])
+def shuffle_options(options):
+    """Перемешивает варианты ответа. Возвращает (перемешанный_список, индексы)."""
+    indexed = list(enumerate(options))
+    random.shuffle(indexed)
+    return indexed
 
-def class_choice():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Начать приключение! ⚔️", callback_data="class_start")]
-    ])
 
-def cancel_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
-    ])
+# ========== ГИБРИДНЫЕ КЛАССЫ (45) ==========
 
-def search_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отменить поиск", callback_data="cancel_match")]
-    ])
-
-def ready_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Готов!", callback_data="ready")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_match")]
-    ])
-
-def continue_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⚔️ Продолжить", callback_data="dungeon_continue")],
-        [InlineKeyboardButton(text="❌ Выйти", callback_data="dungeon_exit")]
-    ])
-
-def confirm_exit_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, выйти", callback_data="dungeon_exit_confirm")],
-        [InlineKeyboardButton(text="↩️ Нет, продолжить", callback_data="dungeon_exit_cancel")]
-    ])
-
-def dungeon_answer_kb(theme_key, phase_idx, q_idx):
-    q = DUNGEONS[theme_key]["phases"][phase_idx]["questions"][q_idx]
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=opt["text"], callback_data=f"da_{theme_key}_{phase_idx}_{q_idx}_{i}")]
-        for i, opt in enumerate(q["options"])
-    ])
-
-# ========== ТЕГИ ==========
-TAG_QUESTIONS = [
-    {"category": "Развлечения", "question": "🎮 Как ты обычно проводишь свободное время?",
-     "tags": ["Видеоигры", "Фильмы", "Книги", "Музыка", "Рисование", "Настольные игры"]},
-    {"category": "Активности", "question": "🏃 Что из этого тебя заряжает энергией?",
-     "tags": ["Спорт", "Походы", "Велоспорт", "Плавание", "Йога", "Танцы"]},
-    {"category": "Путешествия", "question": "🌍 Если бы у тебя был портал в любую точку мира — куда бы ты шагнул?",
-     "tags": ["✈️ Новое неизведанное", "🏕️ Лес, костёр и звёзды", "🏖️ Тёплый пляж", "🏔️ Горы и тишина", "🏙️ Шумный мегаполис", "🌿 Дикая природа"]},
-    {"category": "Интеллект", "question": "🧠 Какая тема вызывает у тебя живой интерес?",
-     "tags": ["Наука", "IT/Технологии", "Психология", "История", "Языки", "Философия"]},
-    {"category": "Еда", "question": "🍽️ Что из этого ты предпочитаешь?",
-     "tags": ["Кулинария", "Кофе", "Вино", "Фастфуд", "Суши", "ЗОЖ"]},
-    {"category": "Личность", "question": "🧑‍🤝‍🧑 Как бы ты описал себя в компании?",
-     "tags": ["Лидер", "Наблюдатель", "Эмпат", "Домосед", "Тусовщик", "Дипломат"]}
-]
-
-def tag_question_kb(tags, step):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t, callback_data=f"tag_{step}_{i}")] for i, t in enumerate(tags)
-    ] + [[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]])
-
-# ========== КВИЗ 5×5 ==========
-QUIZ = [
-    {"text": "🚪 Ты заходишь в переполненную комнату. Что делаешь?",
-     "options": [
-         ("Сразу иду знакомиться и заявляю о себе", "Бард"),
-         ("Встаю в стороне и наблюдаю", "Тень"),
-         ("Иду к тому, кто выглядит одиноким", "Жрец"),
-         ("Прохожу к центру, веду себя уверенно", "Рыцарь"),
-         ("Оцениваю обстановку, выбираю выгодную позицию", "Тёмный Страж"),
-     ]},
-    {"text": "🗺️ Ты нашёл старую карту сокровищ. Что сделаешь?",
-     "options": [
-         ("Сразу отправляюсь на поиски", "Варвар"),
-         ("Изучаю карту, проверяю подлинность", "Волшебник"),
-         ("Составляю план и черчу маршрут", "Инженер"),
-         ("Пытаюсь продать или обменять", "Бард"),
-         ("Иду в одиночку, без лишних глаз", "Следопыт"),
-     ]},
-    {"text": "💔 Друг подвёл тебя. Твоя реакция?",
-     "options": [
-         ("Прощаю — все ошибаются", "Жрец"),
-         ("Разбираюсь, почему так вышло", "Волшебник"),
-         ("Обижаюсь, но виду не подаю", "Тень"),
-         ("Говорю прямо, требую исправить", "Рыцарь"),
-         ("Удаляю из жизни, как сухую ветку", "Друид"),
-     ]},
-    {"text": "🏕️ Какой отдых тебе ближе?",
-     "options": [
-         ("Поход с палаткой и костром", "Следопыт"),
-         ("Экстремальные виды спорта, адреналин", "Варвар"),
-         ("Вечеринка с друзьями до утра", "Бард"),
-         ("Прогулка по городу, изучение нового", "Инженер"),
-         ("Уединение вдали от всех", "Друид"),
-     ]},
-    {"text": "💎 Что ценишь в людях больше всего?",
-     "options": [
-         ("Честность", "Рыцарь"),
-         ("Ум", "Волшебник"),
-         ("Доброту", "Жрец"),
-         ("Верность", "Тёмный Страж"),
-         ("Свободу", "Друид"),
-     ]},
-]
-
-# ========== 45 ГИБРИДОВ ==========
 HYBRIDS = {
     tuple(sorted(["Рыцарь", "Жрец"])): ("🛡️ Паладин", "Ты — свет в броне. Честь и вера ведут тебя. Ты защищаешь не только тела, но и души."),
     tuple(sorted(["Рыцарь", "Варвар"])): ("⚔️ Берсерк", "Ты — ярость в броне. Честь у тебя в крови, но когда враг перед тобой — ты не сдерживаешься."),
@@ -310,1439 +308,3574 @@ HYBRIDS = {
     tuple(sorted(["Жрец", "Друид"])): ("☯️ Шаман веры", "Ты — природа и вера. Ты молишься в лесу, а не в храмах."),
 }
 
-ALL_CLASSES = ["Рыцарь", "Тёмный Страж", "Варвар", "Волшебник", "Инженер",
-               "Бард", "Тень", "Следопыт", "Жрец", "Друид"]
+ALL_BASE_CLASSES = [
+    "Рыцарь", "Тёмный Страж", "Варвар", "Волшебник", "Инженер",
+    "Бард", "Тень", "Следопыт", "Жрец", "Друид"
+]
+
 
 def get_hybrid_class(scores):
+    """Определяет гибрид по баллам. Возвращает (название, описание)."""
     items = list(scores.items())
-    random.shuffle(items)
+    random.shuffle(items)  # для честности при равных баллах
     items.sort(key=lambda x: -x[1])
+
     top1 = items[0][0]
     top2 = items[1][0]
+
     pair = tuple(sorted([top1, top2]))
     if pair in HYBRIDS:
         return HYBRIDS[pair]
     return ("🎭 Загадочный странник", "Ты — тот, кого ещё не описали. Но это ненадолго.")
 
-# ========== ТЕКСТЫ ==========
-WELCOME = """
-🏰 Добро пожаловать в **Рейд Сердец**!
 
-Ты — искатель приключений в мире, где знакомства становятся частью RPG-приключения.
+# ========== КВИЗ 5×5 (определение класса) ==========
 
-Нажми **"Начать приключение!"**, чтобы узнать свой класс.
-"""
+QUIZ = [
+    {
+        "text": "🚪 Ты заходишь в переполненную комнату. Что делаешь?",
+        "options": [
+            ("Сразу иду знакомиться и заявляю о себе", "Бард"),
+            ("Встаю в стороне и наблюдаю", "Тень"),
+            ("Иду к тому, кто выглядит одиноким", "Жрец"),
+            ("Прохожу к центру, веду себя уверенно", "Рыцарь"),
+            ("Оцениваю обстановку, выбираю выгодную позицию", "Тёмный Страж"),
+        ]
+    },
+    {
+        "text": "🗺️ Ты нашёл старую карту сокровищ. Что сделаешь?",
+        "options": [
+            ("Сразу отправляюсь на поиски", "Варвар"),
+            ("Изучаю карту, проверяю подлинность", "Волшебник"),
+            ("Составляю план и черчу маршрут", "Инженер"),
+            ("Пытаюсь продать или обменять", "Бард"),
+            ("Иду в одиночку, без лишних глаз", "Следопыт"),
+        ]
+    },
+    {
+        "text": "💔 Друг подвёл тебя. Твоя реакция?",
+        "options": [
+            ("Прощаю — все ошибаются", "Жрец"),
+            ("Разбираюсь, почему так вышло", "Волшебник"),
+            ("Обижаюсь, но виду не подаю", "Тень"),
+            ("Говорю прямо, требую исправить", "Рыцарь"),
+            ("Удаляю из жизни, как сухую ветку", "Друид"),
+        ]
+    },
+    {
+        "text": "🏕️ Какой отдых тебе ближе?",
+        "options": [
+            ("Поход с палаткой и костром", "Следопыт"),
+            ("Экстремальные виды спорта, адреналин", "Варвар"),
+            ("Вечеринка с друзьями до утра", "Бард"),
+            ("Прогулка по городу, изучение нового", "Инженер"),
+            ("Уединение вдали от всех", "Друид"),
+        ]
+    },
+    {
+        "text": "💎 Что ценишь в людях больше всего?",
+        "options": [
+            ("Честность", "Рыцарь"),
+            ("Ум", "Волшебник"),
+            ("Доброту", "Жрец"),
+            ("Верность", "Тёмный Страж"),
+            ("Свободу", "Друид"),
+        ]
+    },
+]
 
-CONSENT_TEXT = f"""
-📄 **Согласие на обработку персональных данных**
 
-Для работы бота мне нужно обрабатывать твои данные: никнейм, возраст, город, «Маяк», Telegram ID.
+# ========== ТЕГИ (6 категорий × 6 тегов) ==========
 
-📍 Данные хранятся на серверах в России (г. Москва).
-🔒 Используется шифрование.
-🗑️ Ты можешь удалить аккаунт командой `/delete_me` в любой момент.
+TAG_QUESTIONS = [
+    {
+        "category": "Развлечения",
+        "question": "🎮 Как ты обычно проводишь свободное время?",
+        "tags": ["Видеоигры", "Фильмы", "Книги", "Музыка", "Рисование", "Настольные игры"]
+    },
+    {
+        "category": "Активности",
+        "question": "🏃 Что из этого тебя заряжает энергией?",
+        "tags": ["Спорт", "Походы", "Велоспорт", "Плавание", "Йога", "Танцы"]
+    },
+    {
+        "category": "Путешествия",
+        "question": "🌍 Если бы у тебя был портал в любую точку мира — куда бы ты шагнул?",
+        "tags": ["✈️ Новое неизведанное", "🏕️ Лес, костёр и звёзды", "🏖️ Тёплый пляж",
+                 "🏔️ Горы и тишина", "🏙️ Шумный мегаполис", "🌿 Дикая природа"]
+    },
+    {
+        "category": "Интеллект",
+        "question": "🧠 Какая тема вызывает у тебя живой интерес?",
+        "tags": ["Наука", "IT/Технологии", "Психология", "История", "Языки", "Философия"]
+    },
+    {
+        "category": "Еда",
+        "question": "🍽️ Что из этого ты предпочитаешь?",
+        "tags": ["Кулинария", "Кофе", "Вино", "Фастфуд", "Суши", "ЗОЖ"]
+    },
+    {
+        "category": "Личность",
+        "question": "🧑‍🤝‍🧑 Как бы ты описал себя в компании?",
+        "tags": ["Лидер", "Наблюдатель", "Эмпат", "Домосед", "Тусовщик", "Дипломат"]
+    },
+]
 
-Продолжая, ты соглашаешься с обработкой данных.
 
-[📄 Политика конфиденциальности]({POLICY_URL})
-"""
+# ========== КРАСНЫЕ ФЛАГИ (8, выбор до 2) ==========
 
-PROFILE_TEMPLATE = """
-📜 **Твоя анкета**
+RED_FLAGS = [
+    "🚬 Курение",
+    "🍷 Алкоголь",
+    "🎮 Компьютерные игры (много)",
+    "📚 Саморазвитие (фанатичное)",
+    "🗣️ Постоянные голосовые",
+    "📵 Долгие ответы",
+    "🎉 Сверхобщительность",
+    "🤐 Замкнутость",
+]
 
-👤 **Имя:** {username}
-⚔️ **Класс:** {class_name}
-📈 **Уровень:** {level} {progress_bar}
-🎂 **Возраст:** {age}
-🏙️ **Город:** {city}
-🔑 **Маяк:** {mayak_text}
-🚩 **Красные флаги:** {red_flags}
-🏷️ **Теги:**
-{tags}
-🔥 **Стрик:** {daily_streak} дн.
-📊 **Статус:** {status}
-"""
-
-STATUS_NAMES = {"idle": "🟢 Свободен", "searching": "🟡 В поиске", "matched": "🔵 Нашёл пару",
-                "dungeon": "🔴 В приключении"}
-
-# ========== СОСТОЯНИЯ ==========
-class RegForm(StatesGroup):
-    username = State(); age = State(); city = State(); mayak = State()
-    tag_step = State(); red_flags = State()
+MAX_RED_FLAGS = 2  # пока 2. С уровнем откроется 3-й слот
 
 
-# ========== ДАНЖИ ==========
-FOREST = {
+# ========== АКТИВНАЯ ТЕМА ДЛЯ ТЕСТИРОВАНИЯ ==========
+# Меняешь значение — бот использует другую тему.
+# "all" — все темы (для релиза).
+#
+# Доступные ключи:
+#   "forest"     — 🌲 Лес оборотней
+#   "bay"        — ⚓ Бухта призрачных кораблей
+#   "desert"     — 🏜️ Пустыня оставленных надежд
+#   "jungle"     — 🌴 Королевские Джунгли
+#   "inferno"    — 🔥 Цитадель Инферно
+#   "cathedral"  — 🕯️ Собор Тёмной Владычицы
+#   "valley"     — 🏔️ Непроходимая долина
+#   "ziggurat"   — 🏛️ Зиккурат Ложных Идолов
+#   "underwater" — 🌊 Подводная сокровищница
+#   "coast"      — 🏝️ Скалистое побережье
+#   "steam"      — 🚂 Паровое подземелье
+#   "city"       — 🏙️ Загадочный город
+#   "volcano"    — 🌋 Вулкан волнений
+#   "artist"     — 🎨 Мастерская Художника
+
+ACTIVE_THEME = "forest"
+
+
+# ========== ВСЕ ТЕМЫ ==========
+
+DUNGEONS = {}
+
+
+# ========== ТЕМА 1: ЛЕС ОБОРОТНЕЙ ==========
+DUNGEONS["forest"] = {
     "name": "🌲 Лес оборотней",
     "phases": [
-        {"name": "🏰 Таверна «Мрачные Врата»", "questions": [
-            {"text": "🌲 Вы входите в таверну на краю леса. За столом сидит охотник. Он смотрит на вас и улыбается.",
-             "options": [{"text": "Подойду и заговорю первым", "soft": False},
-                         {"text": "Сяду в стороне и понаблюдаю", "soft": True},
-                         {"text": "Спрошу у трактирщика, кто это", "soft": True}],
-             "bridges": {"same": "Охотник поднимает кружку и кивает вам. Трактирщик молча ставит перед вами две тарелки.",
-                         "soft": "Свечи догорают. Охотник встаёт и подходит к вашему столу — без приглашения.",
-                         "mixed": "Трактирщик гасит свет. Охотник остаётся сидеть. Его тень дрожит на стене."}},
-            {"text": "🍺 Охотник предлагает выпить с ним и рассказывает о проклятии леса. Что делаете?",
-             "options": [{"text": "Выпью и выслушаю до конца", "soft": True},
-                         {"text": "Откажусь от выпивки, но слушаю", "soft": False},
-                         {"text": "Задам ему прямой вопрос: «Ты кто такой?»", "soft": False}],
-             "bridges": {"same": "Он досказывает историю. Последние слова — про женщину, которая исчезла здесь три года назад.",
-                         "soft": "Он замолкает и смотрит в окно. За стеклом — лес. И что-то светится между деревьями.",
-                         "mixed": "Он резко встаёт и идёт к выходу. У двери оборачивается: «Утром пойдём. Не задерживайся»."}},
-            {"text": "🌙 Ночью вы просыпаетесь от воя. Охотник стоит у окна и смотрит на луну. Что делаете?",
-             "options": [{"text": "Подойду и спрошу, всё ли в порядке", "soft": True},
-                         {"text": "Притворюсь спящим и буду наблюдать", "soft": True},
-                         {"text": "Тихо возьму оружие", "soft": False}],
-             "bridges": {"same": "Он оборачивается. Его глаза в темноте кажутся жёлтыми. Но он просто улыбается: «Пора».",
-                         "soft": "Вой стихает. Утром вы находите его у дверей — с рюкзаком и двумя факелами.",
-                         "mixed": "Ночь прошла без сна. Охотник ждёт вас на крыльце. Молча."}}
-        ]},
-        {"name": "🌲 Мрачная глушь", "questions": [
-            {"text": "🌲 Тропа раздваивается: одна — освещённая, но длинная. Другая — тёмная, но короткая.",
-             "options": [{"text": "Пойду по светлой — не хочу рисковать", "soft": True},
-                         {"text": "Пойду по тёмной — быстрее дойдём", "soft": False},
-                         {"text": "Спрошу у охотника, какой путь он выберет", "soft": True}],
-             "bridges": {"same": "Тропа выводит к ручью. Вода чёрная, но чистая. Охотник набирает её в флягу.",
-                         "soft": "Лес расступается. Впереди — поляна. На ней что-то лежит.",
-                         "mixed": "Вы выходите к ручью. Охотник оглядывается: «Кто-то шёл за нами»."}},
-            {"text": "🐺 На вас вышел раненый волк. Он не нападает — просто смотрит.",
-             "options": [{"text": "Помогу — вдруг он не опасен", "soft": True},
-                         {"text": "Обойду стороной", "soft": True},
-                         {"text": "Добью — нельзя оставлять за спиной", "soft": False}],
-             "bridges": {"same": "Волк уходит в чащу. Охотник смотрит ему вслед и говорит: «Он вернётся».",
-                         "soft": "На снегу остаётся кровавый след. Охотник идёт по нему, не оборачиваясь.",
-                         "mixed": "Тишина. Охотник достаёт нож и режет метку на дереве: «Здесь мы были»."}},
-            {"text": "🏚️ Вы нашли заброшенную хижину. Внутри тепло — кто-то был здесь недавно.",
-             "options": [{"text": "Останусь и подожду хозяина", "soft": True},
-                         {"text": "Обыщу и уйду", "soft": False},
-                         {"text": "Закрою дверь и пойду дальше", "soft": True}],
-             "bridges": {"same": "В углу — детская игрушка. Охотник берёт её в руки. Молчит.",
-                         "soft": "На столе — карта. Охотник сворачивает её и убирает в карман.",
-                         "mixed": "Он бросает спичку в очаг. Огонь вспыхивает и гаснет. «Идём»."}},
-            {"text": "👤 Из темноты выходит старик. Он говорит: «Не ходите дальше. Там — смерть».",
-             "options": [{"text": "Поблагодарю и поверну назад", "soft": True},
-                         {"text": "Пойду дальше — я не верю ему", "soft": False},
-                         {"text": "Спрошу, откуда он знает", "soft": False}],
-             "bridges": {"same": "Старик смотрит на охотника. Долго. Потом уходит в туман.",
-                         "soft": "Охотник говорит: «Он врёт. Всегда врёт». Но голос у него дрожит.",
-                         "mixed": "Старик хрипит: «Ты привёл их сюда». Охотник молчит."}}
-        ]},
-        {"name": "🐺 Жилище оборотня", "questions": [
-            {"text": "🌕 Вы вышли к поляне. На ней стоит охотник. Он больше не улыбается. Его глаза светятся жёлтым.",
-             "options": [{"text": "Атакую первым", "soft": False},
-                         {"text": "Спрошу, что он хочет", "soft": True},
-                         {"text": "Притворюсь, что не заметил", "soft": True}],
-             "bridges": {"same": "Он снимает плащ. Под ним — шрамы. Много. «Теперь ты знаешь».",
-                         "soft": "Он говорит: «Я не трону вас. Мне нужна помощь».",
-                         "mixed": "Он опускается на колени. Земля под ним трескается."}},
-            {"text": "🐺 Оборотень говорит: «Я помогу вам. Но вы должны сохранить мою тайну».",
-             "options": [{"text": "Соглашусь — он помог нам", "soft": True},
-                         {"text": "Откажусь — нельзя доверять монстру", "soft": False},
-                         {"text": "Соглашусь, но решу потом", "soft": False}],
-             "bridges": {"same": "Он встаёт и идёт вперёд. Деревья расступаются перед ним.",
-                         "soft": "Он говорит: «Спасибо». Впервые за всё время — искренне.",
-                         "mixed": "Он замирает. «Если соврёшь — я найду тебя»."}},
-            {"text": "🌿 Оборотень говорит: «Есть способ снять проклятие. Но цветок растёт только в логове того, кто меня проклял. Я не могу идти туда один».",
-             "options": [{"text": "Помогу — он заслужил шанс", "soft": True},
-                         {"text": "Откажусь — это слишком опасно", "soft": False},
-                         {"text": "Спрошу, что он даст взамен", "soft": False}],
-             "bridges": {"same": "Вы идёте к логову. Чем ближе, тем темнее лес. Оборотень молчит.",
-                         "soft": "Он ведёт вас потайной тропой. Через час вы видите вход в пещеру. Из неё тянет холодом.",
-                         "mixed": "Он говорит: «Я подожду здесь». И садится на камень. Ждёт."}},
-            {"text": "🏡 Вы вернулись в деревню. Жители собрались на площади. Оборотень стоит рядом.",
-             "options": [{"text": "Скажу правду — пусть решают", "soft": False},
-                         {"text": "Совру, чтобы защитить оборотня", "soft": True},
-                         {"text": "Уйду молча — это не моё дело", "soft": True}],
-             "bridges": {"same": "Толпа молчит. Оборотень кладёт руку вам на плечо и уходит в лес.",
-                         "soft": "Староста кивает. Ворота закрываются за вашими спинами.",
-                         "mixed": "Никто не двигается. Только ветер гонит пыль по площади."}}
-        ]}
-    ]
+        {
+            "name": "🏰 Таверна «Мрачные Врата»",
+            "intro": "Дорога привела вас к старой таверне на краю леса. Свет в окнах горит тускло, но дверь открыта. Где-то внутри играет лютня. И пахнет дымом.",
+            "questions": [
+                {
+                    "text": "🌲 Вы входите. За дальним столом сидит охотник. Он смотрит на вас — и улыбается так, будто ждал именно вас.",
+                    "options": [
+                        {"text": "Подойду и заговорю первым", "soft": False},
+                        {"text": "Сяду в стороне и понаблюдаю", "soft": True},
+                        {"text": "Спрошу у трактирщика, кто это", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Охотник поднимает кружку и кивает вам. Трактирщик молча ставит перед вами две тарелки — будто вы уже были здесь раньше.",
+                        "soft": "Свечи догорают. Охотник встаёт и подходит к вашему столу — без приглашения. Садится напротив и молчит.",
+                        "mixed": "Трактирщик гасит свет. Охотник остаётся сидеть. Его тень на стене дрожит, хотя огня уже нет.",
+                    }
+                },
+                {
+                    "text": "🍺 Охотник наливает вам. Он говорит о проклятии, что лежит на этом лесу. Говорит тихо — так, чтобы слышали только вы.",
+                    "options": [
+                        {"text": "Выпью и выслушаю до конца", "soft": True},
+                        {"text": "Откажусь от выпивки, но слушаю", "soft": False},
+                        {"text": "Задам ему прямой вопрос: «Ты кто такой?»", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Он досказывает историю до конца. Последние слова — про женщину, которая исчезла здесь три года назад. Он не говорит, кем она была.",
+                        "soft": "Он замолкает и смотрит в окно. За стеклом — лес. И что-то светится между деревьями. Тускло. Ждёт.",
+                        "mixed": "Он резко встаёт и идёт к выходу. У двери оборачивается: «Утром пойдём. Не задерживайся». И выходит в темноту.",
+                    }
+                },
+                {
+                    "text": "🌙 Ночь. Вы просыпаетесь от воя. За окном — луна. Охотник стоит и смотрит на неё. Не двигается.",
+                    "options": [
+                        {"text": "Подойду и спрошу, всё ли в порядке", "soft": True},
+                        {"text": "Разбужу напарника", "soft": True},
+                        {"text": "Тихо возьму оружие", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Он оборачивается. Его глаза в темноте кажутся жёлтыми. Но он просто улыбается: «Пора».",
+                        "soft": "Вой стихает так же внезапно, как и начался. Утром вы находите охотника у дверей — с рюкзаком и двумя факелами.",
+                        "mixed": "Ночь прошла без сна. Охотник ждёт вас на крыльце. Молча. Он не спрашивает, спали ли вы.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🌲 Мрачная глушь",
+            "intro": "Утро. Лес встречает вас тишиной — даже птицы молчат. Охотник идёт впереди. Тропа узкая. Деревья смыкаются над головой.",
+            "questions": [
+                {
+                    "text": "🌲 Тропа раздваивается. Одна дорога — освещённая, широкая. Вторая — тёмная, но короче. Охотник ждёт вашего решения.",
+                    "options": [
+                        {"text": "Пойду по светлой — не хочу рисковать", "soft": True},
+                        {"text": "Пойду по тёмной — быстрее дойдём", "soft": False},
+                        {"text": "Спрошу у охотника, какой путь он выберет", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Тропа выводит к ручью. Вода чёрная, но чистая. Охотник набирает её в флягу и молча передаёт вам.",
+                        "soft": "Лес расступается. Впереди — поляна. На ней что-то лежит. Охотник ускоряет шаг.",
+                        "mixed": "Вы выходите к ручью. Охотник оглядывается: «Кто-то шёл за нами». Вы не слышите шагов, но верите ему.",
+                    }
+                },
+                {
+                    "text": "🐺 Из кустов выходит волк. Раненый. Он не нападает — просто смотрит. Ждёт.",
+                    "options": [
+                        {"text": "Помогу — вдруг он не опасен", "soft": True},
+                        {"text": "Обойду стороной", "soft": True},
+                        {"text": "Добью — нельзя оставлять за спиной", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Волк уходит в чащу. Охотник смотрит ему вслед и говорит: «Он вернётся». И больше ничего.",
+                        "soft": "На снегу остаётся кровавый след. Охотник идёт по нему, не оборачиваясь. Вы — следом.",
+                        "mixed": "Тишина. Охотник достаёт нож и режет метку на дереве: «Здесь мы были». Его руки не дрожат.",
+                    }
+                },
+                {
+                    "text": "🏚️ Между деревьями — хижина. Старая, но не заброшенная. Из трубы идёт дым. Кто-то был здесь совсем недавно.",
+                    "options": [
+                        {"text": "Останусь и подожду хозяина", "soft": True},
+                        {"text": "Позову напарника — осмотрим вместе", "soft": True},
+                        {"text": "Обыщу и уйду", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "В углу — детская игрушка. Охотник берёт её в руки. Долго молчит. Потом кладёт обратно.",
+                        "soft": "На столе — карта. Охотник сворачивает её и убирает в карман. Не объясняет, зачем.",
+                        "mixed": "Он бросает спичку в очаг. Огонь вспыхивает — и тут же гаснет. «Идём», — говорит он. И выходит.",
+                    }
+                },
+                {
+                    "text": "👤 Из темноты выходит старик. Сгорбленный. Он говорит: «Не ходите дальше. Там — смерть».",
+                    "options": [
+                        {"text": "Поблагодарю и поверну назад", "soft": True},
+                        {"text": "Пойду дальше — я не верю ему", "soft": False},
+                        {"text": "Спрошу, откуда он знает", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Старик смотрит на охотника. Долго. Потом уходит в туман. Охотник не провожает его взглядом.",
+                        "soft": "Охотник говорит: «Он врёт. Всегда врёт». Но голос у него дрожит. Впервые за всё время.",
+                        "mixed": "Старик хрипит: «Ты привёл их сюда». Охотник молчит. Он не отрицает.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🐺 Жилище оборотня",
+            "intro": "Ночь. Луна полная. Вы выходите на поляну. И видите его — охотника. Он стоит в центре. И больше не улыбается.",
+            "questions": [
+                {
+                    "text": "🌕 Его глаза светятся жёлтым. Он снимает плащ. Под ним — шрамы. Много.",
+                    "options": [
+                        {"text": "Атакую первым", "soft": False},
+                        {"text": "Спрошу, что он хочет", "soft": True},
+                        {"text": "Притворюсь, что не заметил", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он опускается на колени. Земля под ним трескается. «Теперь ты знаешь».",
+                        "soft": "Он говорит: «Я не трону вас. Мне нужна помощь». Голос — как у человека, который давно не просил.",
+                        "mixed": "Он снимает плащ и молчит. Шрамы говорят сами за себя.",
+                    }
+                },
+                {
+                    "text": "🐺 Оборотень говорит: «Я помогу вам. Но вы должны сохранить мою тайну».",
+                    "options": [
+                        {"text": "Соглашусь — он помог нам", "soft": True},
+                        {"text": "Откажусь — нельзя доверять монстру", "soft": False},
+                        {"text": "Соглашусь, но решу потом", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Он встаёт и идёт вперёд. Деревья расступаются перед ним. Он не боится леса.",
+                        "soft": "Он говорит: «Спасибо». Впервые за всё время — искренне. Не как охотник, а как человек.",
+                        "mixed": "Он замирает. «Если соврёшь — я найду тебя». Он не угрожает. Он просто говорит правду.",
+                    }
+                },
+                {
+                    "text": "🌿 Оборотень говорит: «Есть способ снять проклятие. Но цветок растёт только в логове того, кто меня проклял. Я не могу идти туда один».",
+                    "options": [
+                        {"text": "Помогу — он заслужил шанс", "soft": True},
+                        {"text": "Откажусь — это слишком опасно", "soft": False},
+                        {"text": "Спрошу, что он даст взамен", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Вы идёте к логову. Чем ближе, тем темнее лес. Оборотень молчит. Он знает, что там.",
+                        "soft": "Он ведёт вас потайной тропой. Через час вы видите вход в пещеру. Из неё тянет холодом.",
+                        "mixed": "Он говорит: «Я подожду здесь». Садится на камень. И действительно ждёт — сколько бы это ни заняло.",
+                    }
+                },
+                {
+                    "text": "🏡 Вы вернулись в деревню. Жители собрались на площади. Оборотень стоит рядом. Они не знают, кто он.",
+                    "options": [
+                        {"text": "Скажу правду — пусть решают", "soft": False},
+                        {"text": "Совру, чтобы защитить оборотня", "soft": True},
+                        {"text": "Спрошу напарника — пусть решает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Толпа молчит. Оборотень кладёт руку вам на плечо. Разворачивается. И уходит в лес. Навсегда.",
+                        "soft": "Староста кивает. Ворота закрываются за вашими спинами. Вы остаётесь вдвоём.",
+                        "mixed": "Никто не двигается. Только ветер гонит пыль по площади. И оборотень смотрит на вас — долго. Ждёт.",
+                    }
+                },
+            ]
+        },
+    ],
+    # Мини-последствия: Q1 (волк) → Q8 (охотник с волком)
+    "flag_question": 0,
+    "flag_options": ["Помогу — вдруг он не опасен", "Обойду стороной", "Добью — нельзя оставлять за спиной"],
+    "flag_effects": {
+        "0": {"target_question": 7, "add_text": "Рядом с охотником — волк. Тот самый. Он смотрит на вас. Он помнит."},
+        "1": {"target_question": 7, "add_text": "Рядом с охотником — волк. Тот самый. Он не враг, но и не друг."},
+        "2": {"target_question": 7, "add_text": "Рядом с охотником — волк. Мёртвыми глазами смотрит на вас. Хотя должен быть мёртв."},
+    }
 }
 
-BAY = {
+
+# ========== ТЕМА 2: БУХТА ПРИЗРАЧНЫХ КОРАБЛЕЙ ==========
+DUNGEONS["bay"] = {
     "name": "⚓ Бухта призрачных кораблей",
     "phases": [
-        {"name": "🌊 Покинутый берег", "questions": [
-            {"text": "🌫️ Вы выходите на берег. Туман стоит стеной. Вдали — силуэты кораблей.",
-             "options": [{"text": "Пойду вдоль берега — надо осмотреться", "soft": True},
-                         {"text": "Сразу пойду к кораблям — нельзя терять время", "soft": False},
-                         {"text": "Останусь здесь до рассвета — ночью опасно", "soft": True}],
-             "bridges": {"same": "Волны выбрасывают на берег обломок мачты. На нём — вырезанное имя.",
-                         "soft": "Туман сгущается. Между кораблями мелькает огонёк — и гаснет.",
-                         "mixed": "Из воды выходит фигура. Она не смотрит на вас. Она идёт к кораблям."}},
-            {"text": "🕯️ На берегу — старый фонарь. Он горит, хотя вокруг ни души.",
-             "options": [{"text": "Возьму его — свет пригодится", "soft": False},
-                         {"text": "Оставлю — кто-то его зажёг, значит, вернётся", "soft": True},
-                         {"text": "Затушу — не хочу, чтобы меня заметили", "soft": False}],
-             "bridges": {"same": "Фонарь гаснет. В темноте остаётся только шум прибоя.",
-                         "soft": "Из тумана выходят двое. Они молчат. И ждут.",
-                         "mixed": "Кто-то окликает вас по имени. Но никого не видно."}},
-            {"text": "👤 Из тумана выходит старик. Он говорит: «Не ходите туда. Они забирают всех».",
-             "options": [{"text": "Спрошу, кто «они»", "soft": False},
-                         {"text": "Поблагодарю и пойду дальше", "soft": True},
-                         {"text": "Предложу ему пойти с нами", "soft": True}],
-             "bridges": {"same": "Старик показывает на корабли и исчезает. Туман смыкается.",
-                         "soft": "Он даёт вам амулет и уходит. Не оборачиваясь.",
-                         "mixed": "Он смеётся. «Все так говорят». И растворяется."}}
-        ]},
-        {"name": "🪝 Обломки кораблей", "questions": [
-            {"text": "⚓ Вы подошли к первому кораблю. Палуба цела. На ней — свежие следы.",
-             "options": [{"text": "Поднимусь на палубу", "soft": False},
-                         {"text": "Обойду корабль по кругу", "soft": True},
-                         {"text": "Окликну — вдруг кто-то есть", "soft": False}],
-             "bridges": {"same": "На палубе — карта. На ней отмечен главный корабль. Крестик.",
-                         "soft": "Следы ведут к люку. Он приоткрыт. Из него тянет холодом.",
-                         "mixed": "Из трюма доносится пение. Женский голос. Тихий."}},
-            {"text": "📜 В каюте вы нашли судовой журнал. Последняя запись: «Он среди нас».",
-             "options": [{"text": "Прочитаю журнал с начала", "soft": False},
-                         {"text": "Закрою и уйду", "soft": True},
-                         {"text": "Покажу напарнику — вдвоём решим", "soft": True}],
-             "bridges": {"same": "Журнал рассыпается в руках. Остаётся только одна страница. С именем.",
-                         "soft": "Свеча догорает. В темноте кто-то шепчет.",
-                         "mixed": "Дверь каюты закрывается сама. Вы остаётесь вдвоём."}},
-            {"text": "🔔 Где-то в трюме звенит колокол. Он звонит сам по себе.",
-             "options": [{"text": "Спущусь в трюм", "soft": False},
-                         {"text": "Останусь на палубе", "soft": True},
-                         {"text": "Позову напарника и спустимся вместе", "soft": True}],
-             "bridges": {"same": "Колокол стихает. Из трюма выходит человек. Он смотрит на вас.",
-                         "soft": "Звон прекращается. На палубе появляется фигура в мундире.",
-                         "mixed": "Колокол падает. Тишина. Все корабли вокруг — как один."}},
-            {"text": "🕳️ Перед вами — люк. Из него тянет холодом. Напарник предлагает спуститься.",
-             "options": [{"text": "Пойду первым", "soft": False},
-                         {"text": "Пусть он идёт первым", "soft": False},
-                         {"text": "Спустимся вместе", "soft": True}],
-             "bridges": {"same": "Внизу — коридор. В конце — свет. И голоса.",
-                         "soft": "Ступени ведут вниз. Чем глубже — тем светлее.",
-                         "mixed": "Люк закрывается. Темнота. Только дыхание рядом."}}
-        ]},
-        {"name": "👻 Корабль адмирала призраков", "questions": [
-            {"text": "🌑 На палубе — фигура в адмиральском мундире. Она не двигается. И не дышит.",
-             "options": [{"text": "Подойду и заговорю", "soft": False},
-                         {"text": "Останусь на месте и подожду", "soft": True},
-                         {"text": "Достану оружие", "soft": False}],
-             "bridges": {"same": "Адмирал поднимает голову. Его глаза — как две чёрные дыры.",
-                         "soft": "Он говорит: «Я ждал вас. Долго ждал».",
-                         "mixed": "Палуба наклоняется. Корабль медленно идёт ко дну."}},
-            {"text": "💀 Адмирал говорит: «Отдайте мне одно имя — и я отпущу вас живыми».",
-             "options": [{"text": "Отдам своё имя", "soft": True},
-                         {"text": "Откажусь — имя — это я", "soft": False},
-                         {"text": "Спрошу, зачем ему имя", "soft": False}],
-             "bridges": {"same": "Адмирал кивает. «Хорошо». Море вокруг стихает.",
-                         "soft": "Он улыбается. Впервые за сотни лет. «Свободны».",
-                         "mixed": "Он поднимает руку. Вода вокруг корабля закипает."}},
-            {"text": "🌊 Корабль тонет. Одна шлюпка — на двоих.",
-             "options": [{"text": "Уступлю место напарнику", "soft": True},
-                         {"text": "Первым прыгну в шлюпку", "soft": False},
-                         {"text": "Будем грести по очереди", "soft": True}],
-             "bridges": {"same": "Шлюпка отходит. Корабль уходит под воду. На его месте — тишина.",
-                         "soft": "Берег близко. Туман расступается.",
-                         "mixed": "Вода холодная. Вы гребёте молча. Никто не оглядывается."}},
-            {"text": "🏝️ Вы выбрались на берег. Позади — ничего. Только туман.",
-             "options": [{"text": "Возьму напарника за плечо — молча", "soft": True},
-                         {"text": "Отойду на пару шагов — подышать", "soft": False},
-                         {"text": "Сяду прямо на песок — ноги гудят", "soft": True}],
-             "bridges": {"same": "Солнце встаёт. Море спокойно. Кораблей больше нет.",
-                         "soft": "Вы сидите на песке. Рядом — амулет старика. Он тёплый.",
-                         "mixed": "Рассвет. Волны лижут берег. Каждый думает о своём."}}
-        ]}
-    ]
+        {
+            "name": "🌊 Покинутый берег",
+            "intro": "Вы выходите на берег. Туман стоит стеной — такой плотный, что не видно собственных ног. Где-то вдали — силуэты кораблей. Они не двигаются. И не качаются на волнах.",
+            "questions": [
+                {
+                    "text": "🌫️ Волны лениво накатывают на песок. Впереди — берег, уходящий в туман. Справа — тёмная вода. Слева — скалы. Куда идёте?",
+                    "options": [
+                        {"text": "Пойду вдоль берега — надо осмотреться", "soft": True},
+                        {"text": "Сразу пойду к кораблям — нельзя терять время", "soft": False},
+                        {"text": "Останусь здесь до рассвета — ночью опасно", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Волны выбрасывают на берег обломок мачты. На нём — вырезанное имя. Вы не знаете, чьё оно.",
+                        "soft": "Туман сгущается. Между кораблями мелькает огонёк — и гаснет. Кто-то был там.",
+                        "mixed": "Из воды выходит фигура. Она не смотрит на вас. Она идёт к кораблям — медленно, будто устала.",
+                    }
+                },
+                {
+                    "text": "🕯️ На берегу — старый фонарь. Он горит. Но вокруг ни души. Стекло мутное, огонь дрожит.",
+                    "options": [
+                        {"text": "Возьму его — свет пригодится", "soft": False},
+                        {"text": "Оставлю — кто-то его зажёг, значит, вернётся", "soft": True},
+                        {"text": "Затушу — не хочу, чтобы меня заметили", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Фонарь гаснет. В темноте остаётся только шум прибоя. И чьё-то дыхание рядом.",
+                        "soft": "Из тумана выходят двое. Они молчат. Они ждут. Чего — неизвестно.",
+                        "mixed": "Кто-то окликает вас по имени. Голос знакомый. Но вы никого не видите.",
+                    }
+                },
+                {
+                    "text": "👤 Из тумана выходит старик. Борода седая, глаза пустые. Он говорит: «Не ходите туда. Они забирают всех».",
+                    "options": [
+                        {"text": "Спрошу, кто «они»", "soft": False},
+                        {"text": "Поблагодарю и пойду дальше", "soft": True},
+                        {"text": "Предложу ему пойти с нами", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Старик показывает на корабли и исчезает. Туман смыкается там, где он стоял.",
+                        "soft": "Он даёт вам амулет — тёплый, как живой. И уходит. Не оборачивается.",
+                        "mixed": "Он смеётся. «Все так говорят». И растворяется в воздухе.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🪝 Обломки кораблей",
+            "intro": "Туман немного расходится. Вы подходите к первому кораблю. Он разбит, но палуба цела. На досках — свежие следы. Кто-то был здесь недавно.",
+            "questions": [
+                {
+                    "text": "⚓ Вы стоите у борта. Палуба скрипит. Следы ведут к люку. Из люка тянет холодом.",
+                    "options": [
+                        {"text": "Поднимусь на палубу", "soft": False},
+                        {"text": "Обойду корабль по кругу", "soft": True},
+                        {"text": "Окликну — вдруг кто-то есть", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "На палубе — карта. На ней отмечен главный корабль. Крестик. Кто-то очень хотел его найти.",
+                        "soft": "Следы ведут к люку. Он приоткрыт. Из него тянет холодом. Вы чувствуете — там кто-то есть.",
+                        "mixed": "Из трюма доносится пение. Женский голос. Тихий. Он поёт колыбельную.",
+                    }
+                },
+                {
+                    "text": "📜 В каюте вы нашли судовой журнал. Последняя запись: «Он среди нас». Чернила свежие. Будто писали сегодня.",
+                    "options": [
+                        {"text": "Прочитаю журнал с начала", "soft": False},
+                        {"text": "Закрою и уйду", "soft": True},
+                        {"text": "Покажу напарнику — вдвоём решим", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Журнал рассыпается в руках. Остаётся одна страница. С именем. Вашим.",
+                        "soft": "Свеча догорает. В темноте кто-то шепчет. Вы не разбираете слов — только интонацию.",
+                        "mixed": "Дверь каюты закрывается сама. Вы остаётесь вдвоём. Тишина.",
+                    }
+                },
+                {
+                    "text": "🔔 Где-то в трюме звенит колокол. Он звонит сам по себе. Раз. Два. Три.",
+                    "options": [
+                        {"text": "Спущусь в трюм", "soft": False},
+                        {"text": "Останусь на палубе", "soft": True},
+                        {"text": "Стукну по палубе — вдруг отзовётся", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Колокол стихает. Из трюма выходит человек. Он смотрит на вас. Долго. Не мигает.",
+                        "soft": "Звон прекращается. На палубе появляется фигура в мундире. Она не двигается.",
+                        "mixed": "Колокол падает. Тишина. Все корабли вокруг — как один. Все смотрят на вас.",
+                    }
+                },
+                {
+                    "text": "🕳️ Перед вами — люк. Из него тянет холодом. Слышны странные звуки — будто кто-то перебирает монеты.",
+                    "options": [
+                        {"text": "Спущусь один", "soft": False},
+                        {"text": "Осмотрю люк — может, там что-то есть", "soft": True},
+                        {"text": "Обойду стороной — не хочу рисковать", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Внизу — коридор. В конце — свет. И голоса. Они говорят о вас.",
+                        "soft": "Люк закрыт. Вы идёте дальше. Звуки стихают — не сразу, постепенно.",
+                        "mixed": "Что-то тянет вас вниз. Вы не поддаётесь. Но оно не отпускает.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "👻 Корабль адмирала призраков",
+            "intro": "Главный корабль стоит на месте. Паруса чёрные. На палубе — фигура в адмиральском мундире. Она не двигается. И не дышит.",
+            "questions": [
+                {
+                    "text": "🌑 Вы поднимаетесь на борт. Адмирал стоит у штурвала. Он поворачивает голову. Медленно.",
+                    "options": [
+                        {"text": "Подойду и заговорю", "soft": False},
+                        {"text": "Останусь на месте и подожду", "soft": True},
+                        {"text": "Достану оружие", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Адмирал поднимает голову. Его глаза — как две чёрные дыры. В них ничего нет.",
+                        "soft": "Он говорит: «Я ждал вас. Долго ждал». Голос — как скрип дерева.",
+                        "mixed": "Палуба наклоняется. Корабль медленно идёт ко дну. Но вы стоите.",
+                    }
+                },
+                {
+                    "text": "💀 Адмирал говорит: «Отдайте мне одно имя — и я отпущу вас живыми. Любое имя».",
+                    "options": [
+                        {"text": "Отдам своё имя", "soft": True},
+                        {"text": "Откажусь — имя — это я", "soft": False},
+                        {"text": "Спрошу, зачем ему имя", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Адмирал кивает. «Хорошо». Море вокруг стихает. Волны замирают.",
+                        "soft": "Он улыбается. Впервые за сотни лет. «Свободны». Дверь открывается.",
+                        "mixed": "Он поднимает руку. Вода вокруг корабля закипает. Пар закрывает небо.",
+                    }
+                },
+                {
+                    "text": "🌊 Корабль тонет. Осталась одна шлюпка. На двоих. Течение сильное.",
+                    "options": [
+                        {"text": "Уступлю место напарнику", "soft": True},
+                        {"text": "Первым прыгну в шлюпку", "soft": False},
+                        {"text": "Будем грести по очереди", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Шлюпка отходит. Корабль уходит под воду. На его месте — тишина. И туман.",
+                        "soft": "Берег близко. Туман расступается. Вы видите песок.",
+                        "mixed": "Вода холодная. Вы гребёте молча. Никто не оглядывается.",
+                    }
+                },
+                {
+                    "text": "🏝️ Вы выбрались на берег. Позади — ничего. Только туман. Впереди — рассвет.",
+                    "options": [
+                        {"text": "Присяду на песок — передохнуть", "soft": True},
+                        {"text": "Осмотрюсь — куда нас вынесло", "soft": False},
+                        {"text": "Поищу пресную воду — запас на дорогу", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Солнце встаёт. Море спокойно. Кораблей больше нет. Только тишина.",
+                        "soft": "Вы сидите на песке. Рядом — амулет старика. Он тёплый. Как живой.",
+                        "mixed": "Рассвет. Волны лижут берег. Каждый думает о своём. И это нормально.",
+                    }
+                },
+            ]
+        },
+    ],
+    # Мини-последствия: Q2 (фонарь) → Q8 (адмирал)
+    "flag_question": 1,
+    "flag_options": ["Возьму его — свет пригодится", "Оставлю — кто-то его зажёг, значит, вернётся", "Затушу — не хочу, чтобы меня заметили"],
+    "flag_effects": {
+        "0": {"target_question": 7, "add_text": "Адмирал смотрит на фонарь в ваших руках. И кивает. Будто ждал именно этого."},
+        "1": {"target_question": 7, "add_text": "Адмирал смотрит на пустые руки. И улыбается. Он знал, что вы не возьмёте."},
+        "2": {"target_question": 7, "add_text": "Адмирал смотрит на вас. В его глазах — тьма. Вы погасили его свет. Он этого не забудет."},
+    }
 }
 
-DESERT = {
+
+# ========== ТЕМА 3: ПУСТЫНЯ ОСТАВЛЕННЫХ НАДЕЖД ==========
+DUNGEONS["desert"] = {
     "name": "🏜️ Пустыня оставленных надежд",
     "phases": [
-        {"name": "🌴 Оазис надежды", "questions": [
-            {"text": "🌴 Вы вышли к оазису. У источника сидит человек. Он не двигается.",
-             "options": [{"text": "Подойду и спрошу, всё ли в порядке", "soft": True},
-                         {"text": "Наберу воды и пойду дальше", "soft": False},
-                         {"text": "Сяду рядом и подожду, что он скажет", "soft": True}],
-             "bridges": {"same": "Он поднимает голову. «Вы первые, кто подошёл». Голос хриплый.",
-                         "soft": "Он протягивает вам флягу. В ней — вода. Чистая. Он отдаёт её без слов.",
-                         "mixed": "Он встаёт и уходит в пустыню. Не оглядываясь."}},
-            {"text": "🥖 У него есть еда — но только на одного. Он предлагает её вам.",
-             "options": [{"text": "Откажусь — он выглядит хуже нас", "soft": True},
-                         {"text": "Возьму — нам нужно выжить", "soft": False},
-                         {"text": "Разделю на всех", "soft": True}],
-             "bridges": {"same": "Он кивает. «Дальше — дюны. Там нет ничего. Будьте осторожны».",
-                         "soft": "Он рассказывает, что раньше здесь был город. Теперь — только песок.",
-                         "mixed": "Он говорит: «Вы ещё вернётесь». Смеётся и кашляет."}},
-            {"text": "💧 Он просит: «Возьмите меня с собой. Я не дойду один».",
-             "options": [{"text": "Возьму — не могу бросить", "soft": True},
-                         {"text": "Откажу — он замедлит нас", "soft": False},
-                         {"text": "Спрошу напарника, что он думает", "soft": True}],
-             "bridges": {"same": "Он идёт рядом. Медленно. Но идёт.",
-                         "soft": "Он остаётся у оазиса. «Идите. Я догоню». Но вы знаете, что не догонит.",
-                         "mixed": "Он смотрит вам вслед. Долго. Потом садится обратно к воде."}}
-        ]},
-        {"name": "🔥 Жестокие дюны", "questions": [
-            {"text": "🔥 Солнце в зените. Впереди — караван. Они машут вам. Но у вас только одна фляга.",
-             "options": [{"text": "Подойду — может, у них есть вода", "soft": True},
-                         {"text": "Обойду — у них могут быть плохие намерения", "soft": False},
-                         {"text": "Подойду, но оружие наготове", "soft": False}],
-             "bridges": {"same": "Караванщики дают вам воду. Бесплатно. «Здесь так принято».",
-                         "soft": "Они смотрят на вас и молчат. Потом один говорит: «Идите на север. Там храм».",
-                         "mixed": "Они уходят. Один оборачивается: «Не ходите к храму. Он забирает всех»."}},
-            {"text": "👤 В песке лежит человек. Он без сознания. У вас осталось полфляги воды.",
-             "options": [{"text": "Отдам ему всю воду", "soft": True},
-                         {"text": "Пройду мимо — нам самим не хватит", "soft": False},
-                         {"text": "Смочу ему губы и пойду дальше", "soft": True}],
-             "bridges": {"same": "Он приходит в себя. «Идите к храму. Там — ответы».",
-                         "soft": "Он не просыпается. Вы идёте дальше. Песок заметает следы.",
-                         "mixed": "Он бормочет что-то. Вы не разбираете слов. Только одно: «Не ходи»."}},
-            {"text": "🐍 На вас ползёт змея. Она не ядовита, но голодна.",
-             "options": [{"text": "Отдам еду — она тоже хочет жить", "soft": True},
-                         {"text": "Прогоню — нам нужнее", "soft": False},
-                         {"text": "Убью — она опасна", "soft": False}],
-             "bridges": {"same": "Змея уползает. В песке остаётся след. Он ведёт к храму.",
-                         "soft": "Она хватает еду и исчезает. Вы идёте дальше голодными.",
-                         "mixed": "Она сворачивается клубком. Смотрит на вас. Не уходит."}},
-            {"text": "⚱️ Вы нашли колодец. Вода есть. Напарник предлагает спуститься.",
-             "options": [{"text": "Спущусь первым", "soft": False},
-                         {"text": "Пусть он спустится — я подожду", "soft": False},
-                         {"text": "Спустимся вместе", "soft": True}],
-             "bridges": {"same": "На дне — монеты. Много. Кто-то бросал их сюда годами.",
-                         "soft": "Вода холодная. Вы пьёте впервые за день. На дне — ничего.",
-                         "mixed": "Верёвка обрывается. Вы выбираетесь по стенам. Колодец остаётся позади."}}
-        ]},
-        {"name": "🏛️ Утонувший в песках храм", "questions": [
-            {"text": "🏛️ Вы вышли к храму. Он наполовину ушёл в песок. Из входа тянет холодом.",
-             "options": [{"text": "Войду сразу", "soft": False},
-                         {"text": "Обойду храм — может, есть другой вход", "soft": True},
-                         {"text": "Сяду и подожду до утра", "soft": True}],
-             "bridges": {"same": "Внутри — темнота. Факелы горят сами. Как будто ждали вас.",
-                         "soft": "Вы находите боковой вход. Он ведёт вниз. Глубже, чем главный.",
-                         "mixed": "Ночь прошла. Утром храм выглядит иначе. Больше. Страшнее."}},
-            {"text": "👑 В главном зале — статуя. Женщина с чашей. Надпись: «Отдай — и получишь».",
-             "options": [{"text": "Брошу монету — на удачу", "soft": True},
-                         {"text": "Ничего не буду бросать — это суеверие", "soft": False},
-                         {"text": "Спрошу напарника, что он думает", "soft": True}],
-             "bridges": {"same": "Монета падает на дно. Чаша наполняется водой. Сама. Вы пьёте — вода холодная и чистая.",
-                         "soft": "Статуя поворачивает голову. Медленно. Смотрит на вас. Из чаши поднимается дым.",
-                         "mixed": "Из чаши поднимается дым. Он собирается в фигуру. Фигура молчит."}},
-            {"text": "💀 Фигура говорит: «Один из вас должен остаться. Иначе храм не отпустит». Стены начинают дрожать.",
-             "options": [{"text": "Останусь я", "soft": True},
-                         {"text": "Пусть останется напарник", "soft": False},
-                         {"text": "Откажусь — мы уйдём вместе", "soft": True}],
-             "bridges": {"same": "Фигура кивает. «Так и будет». Пол трескается. Вы бежите к выходу.",
-                         "soft": "Она улыбается. «Ты выбрал. Теперь иди». Камни падают за спиной.",
-                         "mixed": "Она поднимает руку. Храм рушится. Вы выбегаете в последний момент."}},
-            {"text": "🌅 Вы вышли из храма. Позади — тишина. Впереди — пустыня. И рассвет.",
-             "options": [{"text": "Возьму напарника за плечо — молча", "soft": True},
-                         {"text": "Отойду на пару шагов — подышать", "soft": False},
-                         {"text": "Сяду прямо на песок — ноги гудят", "soft": True}],
-             "bridges": {"same": "Солнце встаёт. Пески золотые. Вы идёте на восток.",
-                         "soft": "Храм за спиной оседает. На его месте — ровный песок.",
-                         "mixed": "Вы идёте молча. Каждый — своей дорогой. Но рядом."}}
-        ]}
-    ]
+        {
+            "name": "🌴 Оазис надежды",
+            "intro": "Солнце в зените. Вы идёте уже третий день. Губы сухие, фляга пуста. И тут — впереди — зелень. Настоящая. Оазис. Но что-то с ним не так. У источника сидит человек. Он не двигается.",
+            "questions": [
+                {
+                    "text": "🌴 Пальмы, тень, вода. Но человек у источника не пьёт. Не двигается. Просто смотрит на воду.",
+                    "options": [
+                        {"text": "Подойду и спрошу, всё ли в порядке", "soft": True},
+                        {"text": "Наберу воды и пойду дальше", "soft": False},
+                        {"text": "Сяду рядом и подожду, что он скажет", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он поднимает голову. «Вы первые, кто подошёл». Голос хриплый, как песок.",
+                        "soft": "Он протягивает вам флягу. В ней — вода. Чистая. Он отдаёт её без слов.",
+                        "mixed": "Он встаёт и уходит в пустыню. Не оглядываясь. Вы не успеваете спросить, куда.",
+                    }
+                },
+                {
+                    "text": "🥖 У него есть еда. Но только на одного. Он протягивает вам лепёшку.",
+                    "options": [
+                        {"text": "Откажусь — он выглядит хуже нас", "soft": True},
+                        {"text": "Возьму — нам нужно выжить", "soft": False},
+                        {"text": "Разделю на всех", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он кивает. «Дальше — дюны. Там нет ничего. Будьте осторожны». И замолкает.",
+                        "soft": "Он рассказывает, что раньше здесь был город. Теперь — только песок. И память.",
+                        "mixed": "Он говорит: «Вы ещё вернётесь». Смеётся и кашляет. И уходит в пустыню.",
+                    }
+                },
+                {
+                    "text": "💧 Он просит: «Возьмите меня с собой. Я не дойду один. Я знаю — вы идёте к храму».",
+                    "options": [
+                        {"text": "Возьму — не могу бросить", "soft": True},
+                        {"text": "Откажу — он замедлит нас", "soft": False},
+                        {"text": "Спрошу напарника, что он думает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он идёт рядом. Медленно. Но идёт. И молчит.",
+                        "soft": "Он остаётся у оазиса. «Идите. Я догоню». Но вы знаете, что не догонит.",
+                        "mixed": "Он смотрит вам вслед. Долго. Потом садится обратно к воде. И больше не смотрит.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🔥 Жестокие дюны",
+            "intro": "Оазис остался позади. Впереди — только песок. Бесконечный. И жара. И тишина. Такая, что слышно, как стучит кровь в висках.",
+            "questions": [
+                {
+                    "text": "🔥 Впереди — караван. Они машут вам. У вас одна фляга. У них — целый обоз.",
+                    "options": [
+                        {"text": "Подойду — может, у них есть вода", "soft": True},
+                        {"text": "Обойду — у них могут быть плохие намерения", "soft": False},
+                        {"text": "Подойду, но оружие наготове", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Караванщики дают вам воду. Бесплатно. «Здесь так принято». И идут дальше.",
+                        "soft": "Они смотрят на вас и молчат. Потом один говорит: «Идите на север. Там храм».",
+                        "mixed": "Они уходят. Один оборачивается: «Не ходите к храму. Он забирает всех». И больше не оборачивается.",
+                    }
+                },
+                {
+                    "text": "👤 В песке лежит человек. Без сознания. У вас осталось полфляги воды.",
+                    "options": [
+                        {"text": "Отдам ему всю воду", "soft": True},
+                        {"text": "Пройду мимо — нам самим не хватит", "soft": False},
+                        {"text": "Смочу ему губы и пойду дальше", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он приходит в себя. «Идите к храму. Там — ответы». И снова теряет сознание.",
+                        "soft": "Он не просыпается. Вы идёте дальше. Песок заметает следы. И его тоже.",
+                        "mixed": "Он бормочет что-то. Вы не разбираете слов. Только одно: «Не ходи».",
+                    }
+                },
+                {
+                    "text": "🐍 На вас ползёт змея. Не ядовита. Но голодна. И очень упорна.",
+                    "options": [
+                        {"text": "Отдам еду — она тоже хочет жить", "soft": True},
+                        {"text": "Прогоню — нам нужнее", "soft": False},
+                        {"text": "Убью — она опасна", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Змея уползает. В песке остаётся след. Он ведёт к храму.",
+                        "soft": "Она хватает еду и исчезает. Вы идёте дальше голодными. Но живыми.",
+                        "mixed": "Она сворачивается клубком. Смотрит на вас. Не уходит. Долго.",
+                    }
+                },
+                {
+                    "text": "⚱️ Вы нашли колодец. Вода есть. Но дно тёмное. Глубокое. Спуститься можно.",
+                    "options": [
+                        {"text": "Спущусь первым", "soft": False},
+                        {"text": "Пусть он спустится — я подожду", "soft": False},
+                        {"text": "Спустимся вместе", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "На дне — монеты. Много. Кто-то бросал их сюда годами. На удачу. Но удачи не случилось.",
+                        "soft": "Вода холодная. Вы пьёте впервые за день. На дне — ничего. Только тьма и тишина.",
+                        "mixed": "Верёвка обрывается. Вы выбираетесь по стенам — медленно, цепляясь за камни. Колодец остаётся позади.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🏛️ Утонувший в песках храм",
+            "intro": "Дюны расступаются. Впереди — храм. Он ушёл в песок наполовину. Вход открыт. Из него тянет холодом. И тишиной. Настоящей.",
+            "questions": [
+                {
+                    "text": "🏛️ Вы стоите у входа. Внутри темно. Но не пусто. Вы чувствуете — там кто-то есть.",
+                    "options": [
+                        {"text": "Войду сразу", "soft": False},
+                        {"text": "Обойду храм — может, есть другой вход", "soft": True},
+                        {"text": "Сяду и подожду до утра", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Внутри — темнота. Факелы горят сами. Как будто ждали вас. Именно вас.",
+                        "soft": "Вы находите боковой вход. Он ведёт вниз. Глубже, чем главный. И темнее.",
+                        "mixed": "Ночь прошла. Утром храм выглядит иначе. Больше. И старше.",
+                    }
+                },
+                {
+                    "text": "👑 В главном зале — статуя. Женщина с чашей. Надпись: «Отдай — и получишь».",
+                    "options": [
+                        {"text": "Брошу монету — на удачу", "soft": True},
+                        {"text": "Ничего не буду бросать — это суеверие", "soft": False},
+                        {"text": "Спрошу напарника, что он думает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Монета падает на дно. Чаша наполняется водой. Сама. Вы пьёте — вода холодная и чистая. Как в детстве.",
+                        "soft": "Статуя поворачивает голову. Медленно. Смотрит на вас. Из чаши поднимается дым.",
+                        "mixed": "Из чаши поднимается дым. Он собирается в фигуру. Фигура молчит. Она ждёт.",
+                    }
+                },
+                {
+                    "text": "💀 Фигура говорит: «Один из вас должен остаться. Иначе храм не отпустит». Стены начинают дрожать.",
+                    "options": [
+                        {"text": "Останусь я", "soft": True},
+                        {"text": "Пусть останется напарник", "soft": False},
+                        {"text": "Откажусь — мы уйдём вместе", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Фигура кивает. «Так и будет». Пол трескается. Вы бежите к выходу. Камни падают за спиной.",
+                        "soft": "Она улыбается. «Ты выбрал. Теперь иди». Стены рушатся. Вы успеваете.",
+                        "mixed": "Она поднимает руку. Храм рушится. Вы выбегаете в последний момент. Вдвоём.",
+                    }
+                },
+                {
+                    "text": "🌅 Вы вышли из храма. Позади — тишина. Впереди — пустыня. И рассвет.",
+                    "options": [
+                        {"text": "Присяду на песок — передохнуть", "soft": True},
+                        {"text": "Осмотрюсь — куда нас вынесло", "soft": False},
+                        {"text": "Поищу воду — запас на дорогу", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Солнце встаёт. Пески золотые. Вы идёте на восток. Молча.",
+                        "soft": "Храм за спиной оседает. На его месте — ровный песок. Будто и не было.",
+                        "mixed": "Вы идёте молча. Каждый — своей дорогой. Но рядом. Пока рядом.",
+                    }
+                },
+            ]
+        },
+    ],
+    # Мини-последствия: Q3 (старик) → Q9 (фигура)
+    "flag_question": 2,
+    "flag_options": ["Возьму — не могу бросить", "Откажу — он замедлит нас", "Спрошу напарника, что он думает"],
+    "flag_effects": {
+        "0": {"target_question": 8, "add_text": "Фигура говорит: «Ты несёшь его с собой. Это правильно. Милосердие — редкая роскошь»."},
+        "1": {"target_question": 8, "add_text": "Фигура говорит: «Ты бросил его. Я не осуждаю. Здесь каждый выживает сам»."},
+        "2": {"target_question": 8, "add_text": "Фигура говорит: «Ты не решил сам. Может, и хорошо. А может — плохо»."},
+    }
 }
 
-JUNGLE = {
+
+# ========== ТЕМА 4: КОРОЛЕВСКИЕ ДЖУНГЛИ ==========
+DUNGEONS["jungle"] = {
     "name": "🌴 Королевские Джунгли",
     "phases": [
-        {"name": "🏕️ Лагерь экспедиции", "questions": [
-            {"text": "🌴 Вы прибыли в лагерь экспедиции. Здесь двадцать человек. Все смотрят на вас с подозрением.",
-             "options": [{"text": "Подойду к командиру и представлюсь", "soft": False},
-                         {"text": "Останусь в стороне, понаблюдаю", "soft": True},
-                         {"text": "Заговорю с простыми рабочими — узнаю, что тут творится", "soft": True}],
-             "bridges": {"same": "Командир кивает: «Вы вовремя. Завтра уходим вглубь. Отдохните».",
-                         "soft": "Рабочие рассказывают: из прошлой группы никто не вернулся. Только один. Он молчит.",
-                         "mixed": "Ночью лагерь затихает. Кто-то ходит между палатками. Не спит."}},
-            {"text": "📜 Ночью к вам подходит человек. Он шепчет: «Не ходите с ними. Они знают, что там».",
-             "options": [{"text": "Спрошу, что он имеет в виду", "soft": False},
-                         {"text": "Поблагодарю и вернусь в палатку", "soft": True},
-                         {"text": "Расскажу командиру", "soft": False}],
-             "bridges": {"same": "Он смотрит на вас. Долго. Потом уходит в темноту.",
-                         "soft": "Утром его нет в лагере. Никто не помнит, как он выглядел.",
-                         "mixed": "Командир молчит. Потом говорит: «Забудь. Готовься к выходу»."}},
-            {"text": "🔥 Утром лагерь собирается в путь. Командир делит отряд на группы по двое. Вас ставят вместе.",
-             "options": [{"text": "Возьму инициативу в свои руки", "soft": False},
-                         {"text": "Дам напарнику выбрать маршрут", "soft": True},
-                         {"text": "Пойдём рядом, плечо к плечу", "soft": True}],
-             "bridges": {"same": "Джунгли смыкаются за спиной. Лагерь исчезает из виду за минуту.",
-                         "soft": "Тропа узкая. Лианы хлещут по лицу. Вы идёте молча.",
-                         "mixed": "Джунгли шумят. Где-то вдалеке — рёв. Командир говорит: «Не отставать»."}}
-        ]},
-        {"name": "🌿 Непроходимые джунгли", "questions": [
-            {"text": "🌿 Тропа обрывается. Впереди — стена лиан. Напарник предлагает рубить. Командир говорит: «Ищите обход».",
-             "options": [{"text": "Буду рубить — так быстрее", "soft": False},
-                         {"text": "Пойду искать обход, как сказал командир", "soft": True},
-                         {"text": "Спрошу напарника, что он думает", "soft": True}],
-             "bridges": {"same": "Лианы поддаются. За ними — тропа. Узкая, но чистая.",
-                         "soft": "Вы находите обход. Он ведёт к ручью. Вода коричневая, но пить можно.",
-                         "mixed": "Вы рубите лианы. Из глубины доносится рычание. Ближе, чем было."}},
-            {"text": "🐒 Стая обезьян окружила вас. Одна держит вашу сумку. Унесла, пока вы спали.",
-             "options": [{"text": "Попробую отобрать силой", "soft": False},
-                         {"text": "Предложу обмен — еду за сумку", "soft": True},
-                         {"text": "Оставлю сумку — жизнь важнее", "soft": True}],
-             "bridges": {"same": "Обезьяны исчезают. Вожак оставляет вам что-то. Камень. Странный.",
-                         "soft": "Они уходят в кроны. Сумка остаётся на земле. Целая.",
-                         "mixed": "Стая расходится. Одна обезьяна смотрит на вас. Долго. Потом прыгает следом."}},
-            {"text": "💀 Вы нашли тело. Это один из прошлой экспедиции. Рядом — дневник.",
-             "options": [{"text": "Прочитаю дневник", "soft": False},
-                         {"text": "Закрою и похороню тело", "soft": True},
-                         {"text": "Отдам дневник командиру", "soft": False}],
-             "bridges": {"same": "Последняя запись: «Он не зверь. Он страж». Больше ничего.",
-                         "soft": "Вы копаете яму. Земля мягкая. Слишком мягкая.",
-                         "mixed": "Командир читает. Молча. Потом рвёт страницу."}},
-            {"text": "🌊 Впереди — река. Мост разрушен. Напарник видит брод. Течение сильное.",
-             "options": [{"text": "Пойду первым — проверю", "soft": False},
-                         {"text": "Пусть он идёт первым", "soft": False},
-                         {"text": "Перейдём вместе, держась за руки", "soft": True}],
-             "bridges": {"same": "Вода холодная. На середине вы видите: на дне — кости. Много.",
-                         "soft": "Течение сбивает с ног. Но вы держитесь. Берег близко.",
-                         "mixed": "Один из вас оступается. Второй тянет. Вы на берегу. Мокрые. Живые."}}
-        ]},
-        {"name": "🐆 Логово зверя", "questions": [
-            {"text": "🐆 Вы вышли к пещере. У входа — кости. Свежие. Из глубины — дыхание. Тяжёлое. Ровное.",
-             "options": [{"text": "Войду сразу", "soft": False},
-                         {"text": "Подожду — пусть выйдет сам", "soft": True},
-                         {"text": "Разожгу огонь — отпугну", "soft": False}],
-             "bridges": {"same": "Из пещеры выходит зверь. Огромный. Смотрит на вас. Ждёт.",
-                         "soft": "Дыхание стихает. Вы ждёте час. Два. Наконец — тишина.",
-                         "mixed": "Огонь пляшет на стенах. Зверь рычит. Но не выходит."}},
-            {"text": "👁️ Зверь говорит человеческим голосом: «Я ждал вас. Вы пришли за камнем?»",
-             "options": [{"text": "Да, скажу правду", "soft": False},
-                         {"text": "Совру — скажу, что заблудились", "soft": False},
-                         {"text": "Спрошу, откуда он знает", "soft": True}],
-             "bridges": {"same": "Он кивает. «Честно. Хорошо». Отходит в сторону.",
-                         "soft": "Он смеётся. «Ложь. Я чувствую её. Но мне нравится ваша смелость».",
-                         "mixed": "Он молчит. Смотрит. Проходит минута. Две. Он не двигается."}},
-            {"text": "🔥 Зверь говорит: «Камень даёт силу. Но берёт память. Один из вас должен его взять. Кто?»",
-             "options": [{"text": "Возьму я", "soft": True},
-                         {"text": "Пусть возьмёт напарник", "soft": False},
-                         {"text": "Откажемся оба — оно того не стоит", "soft": True}],
-             "bridges": {"same": "Он кивает. «Так и будет». Пещера начинает светиться.",
-                         "soft": "Он говорит: «Хорошо. Идите. Я запомню вас».",
-                         "mixed": "Он рычит. «Трусы. Или мудрецы». Свет гаснет."}},
-            {"text": "🌅 Вы вышли из пещеры. Джунгли расступаются. Впереди — лагерь. И рассвет.",
-             "options": [{"text": "Обниму напарника — мы выжили", "soft": True},
-                         {"text": "Отойду в сторону — надо подумать", "soft": False},
-                         {"text": "Промолчу — не знаю, что сказать", "soft": True}],
-             "bridges": {"same": "Лагерь встречает вас тишиной. Командир смотрит. Ждёт ответа.",
-                         "soft": "Солнце встаёт. Джунгли за спиной замолкают. Впервые за всё время.",
-                         "mixed": "Вы идёте к лагерю. Каждый — своей дорогой. Но рядом."}}
-        ]}
-    ]
+        {
+            "name": "🏕️ Лагерь экспедиции",
+            "intro": "Джунгли расступаются. Впереди — лагерь. Палатки, костры, люди. Двадцать человек. Они не рады вам. Это видно по глазам. Но и не прогоняют. Пока.",
+            "questions": [
+                {
+                    "text": "🌴 Вы входите в лагерь. Все замолкают. Смотрят. Один — в форме командира — стоит у костра. Ждёт, что вы скажете.",
+                    "options": [
+                        {"text": "Подойду к командиру и представлюсь", "soft": False},
+                        {"text": "Останусь в стороне, понаблюдаю", "soft": True},
+                        {"text": "Заговорю с простыми рабочими — узнаю, что тут творится", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Командир кивает: «Вы вовремя. Завтра уходим вглубь. Отдохните». Он не спрашивает имён.",
+                        "soft": "Рабочие рассказывают: из прошлой группы никто не вернулся. Только один. И он молчит. До сих пор.",
+                        "mixed": "Ночью лагерь затихает. Кто-то ходит между палатками. Не спит. Всю ночь.",
+                    }
+                },
+                {
+                    "text": "📜 Ночью к вам подходит человек. Лица не видно. Он шепчет: «Не ходите с ними. Они знают, что там».",
+                    "options": [
+                        {"text": "Спрошу, что он имеет в виду", "soft": False},
+                        {"text": "Поблагодарю и вернусь в палатку", "soft": True},
+                        {"text": "Расскажу командиру", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Он смотрит на вас. Долго. Потом уходит в темноту. Вы не слышите шагов.",
+                        "soft": "Утром его нет в лагере. Никто не помнит, как он выглядел. И был ли вообще.",
+                        "mixed": "Командир молчит. Потом говорит: «Забудь. Готовься к выходу». И отворачивается.",
+                    }
+                },
+                {
+                    "text": "🔥 Утром лагерь собирается в путь. Командир делит отряд на группы по двое. Вас ставят вместе.",
+                    "options": [
+                        {"text": "Возьму инициативу в свои руки", "soft": False},
+                        {"text": "Дам напарнику выбрать маршрут", "soft": True},
+                        {"text": "Пойдём рядом, плечо к плечу", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Джунгли смыкаются за спиной. Лагерь исчезает из виду за минуту. Будто его и не было.",
+                        "soft": "Тропа узкая. Лианы хлещут по лицу. Вы идёте молча. Так проще.",
+                        "mixed": "Джунгли шумят. Где-то вдалеке — рёв. Командир говорит: «Не отставать». И ускоряет шаг.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🌿 Непроходимые джунгли",
+            "intro": "Час. Два. Три. Джунгли не кончаются. Тропа петляет, возвращается, снова петляет. Воздух влажный, тяжёлый. И тишина. Слишком тишина.",
+            "questions": [
+                {
+                    "text": "🌿 Тропа обрывается. Впереди — стена лиан. Толстая, как камень. Командир говорит: «Ищите обход».",
+                    "options": [
+                        {"text": "Буду рубить — так быстрее", "soft": False},
+                        {"text": "Пойду искать обход, как сказал командир", "soft": True},
+                        {"text": "Осмотрю лианы — может, есть проход", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Лианы поддаются. За ними — тропа. Узкая, но чистая. И тихая.",
+                        "soft": "Вы находите обход. Он ведёт к ручью. Вода коричневая, но пить можно. Наверное.",
+                        "mixed": "Вы рубите лианы. Из глубины доносится рычание. Ближе, чем было. Намного ближе.",
+                    }
+                },
+                {
+                    "text": "🐒 Стая обезьян окружила вас. Одна держит вашу сумку. Унесла, пока вы спали. Смотрит. Ждёт.",
+                    "options": [
+                        {"text": "Попробую отобрать силой", "soft": False},
+                        {"text": "Предложу обмен — еду за сумку", "soft": True},
+                        {"text": "Оставлю сумку — жизнь важнее", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Обезьяны исчезают. Вожак оставляет вам что-то. Камень. Странный. Тёплый.",
+                        "soft": "Они уходят в кроны. Сумка остаётся на земле. Целая. Даже еда на месте.",
+                        "mixed": "Стая расходится. Одна обезьяна смотрит на вас. Долго. Потом прыгает следом. Не отстаёт.",
+                    }
+                },
+                {
+                    "text": "💀 Вы нашли тело. Это один из прошлой экспедиции. Рядом — дневник. Открыт на последней странице.",
+                    "options": [
+                        {"text": "Прочитаю дневник", "soft": False},
+                        {"text": "Закрою и похороню тело", "soft": True},
+                        {"text": "Отдам дневник командиру", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Последняя запись: «Он не зверь. Он страж». Больше ничего. Ни имени, ни даты.",
+                        "soft": "Вы копаете яму. Земля мягкая. Слишком мягкая. Будто её уже копали.",
+                        "mixed": "Командир читает. Молча. Потом рвёт страницу. И идёт дальше. Не оборачивается.",
+                    }
+                },
+                {
+                    "text": "🌊 Впереди — река. Мост разрушен. Напарник видит брод. Течение сильное. Вода мутная.",
+                    "options": [
+                        {"text": "Пойду первым — проверю", "soft": False},
+                        {"text": "Пусть он идёт первым", "soft": False},
+                        {"text": "Перейдём вместе, держась за руки", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вода холодная. На середине вы видите: на дне — кости. Много. Вы не говорите об этом.",
+                        "soft": "Течение сбивает с ног. Но вы держитесь. Берег близко. Совсем близко.",
+                        "mixed": "Один из вас оступается. Второй тянет. Вы на берегу. Мокрые. Живые. И молчите.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🐆 Логово зверя",
+            "intro": "Джунгли расступаются. Впереди — пещера. У входа — кости. Свежие. Из глубины — дыхание. Тяжёлое. Ровное. Зверь не спит. Он ждёт.",
+            "questions": [
+                {
+                    "text": "🐆 Вы стоите у входа. Кости хрустят под ногами. Дыхание — ближе. Тяжелее.",
+                    "options": [
+                        {"text": "Войду сразу", "soft": False},
+                        {"text": "Подожду — пусть выйдет сам", "soft": True},
+                        {"text": "Разожгу огонь — отпугну", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Из пещеры выходит зверь. Огромный. Смотрит на вас. Ждёт. Не нападает.",
+                        "soft": "Дыхание стихает. Вы ждёте час. Два. Наконец — тишина. Он ушёл.",
+                        "mixed": "Огонь пляшет на стенах. Зверь рычит. Но не выходит. Боится.",
+                    }
+                },
+                {
+                    "text": "👁️ Зверь говорит человеческим голосом: «Я ждал вас. Вы пришли за камнем?»",
+                    "options": [
+                        {"text": "Да, скажу правду", "soft": False},
+                        {"text": "Совру — скажу, что заблудились", "soft": False},
+                        {"text": "Спрошу, откуда он знает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он кивает. «Честно. Хорошо». Отходит в сторону. Пропускает.",
+                        "soft": "Он смеётся. «Ложь. Я чувствую её. Но мне нравится ваша смелость».",
+                        "mixed": "Он молчит. Смотрит. Проходит минута. Две. Он не двигается. И вы тоже.",
+                    }
+                },
+                {
+                    "text": "🔥 Зверь говорит: «Камень даёт силу. Но берёт память. Один из вас должен его взять. Кто?»",
+                    "options": [
+                        {"text": "Возьму я", "soft": True},
+                        {"text": "Пусть возьмёт напарник", "soft": False},
+                        {"text": "Откажемся оба — оно того не стоит", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он кивает. «Так и будет». Пещера начинает светиться. Мягко. Тепло.",
+                        "soft": "Он говорит: «Хорошо. Идите. Я запомню вас». И закрывает глаза.",
+                        "mixed": "Он рычит. «Трусы. Или мудрецы». Свет гаснет. Пещера становится обычной.",
+                    }
+                },
+                {
+                    "text": "🌅 Вы вышли из пещеры. Джунгли расступаются. Впереди — лагерь. И рассвет.",
+                    "options": [
+                        {"text": "Обниму напарника — мы выжили", "soft": True},
+                        {"text": "Отойду в сторону — надо подумать", "soft": False},
+                        {"text": "Промолчу — не знаю, что сказать", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Лагерь встречает вас тишиной. Командир смотрит. Ждёт ответа. Но вы не знаете, что сказать.",
+                        "soft": "Солнце встаёт. Джунгли за спиной замолкают. Впервые за всё время. Совсем тихо.",
+                        "mixed": "Вы идёте к лагерю. Каждый — своей дорогой. Но рядом. Пока рядом.",
+                    }
+                },
+            ]
+        },
+    ],
+    # Мини-последствия: Q2 (человек предупредил) → Q9 (зверь знает)
+    "flag_question": 1,
+    "flag_options": ["Спрошу, что он имеет в виду", "Поблагодарю и вернусь в палатку", "Расскажу командиру"],
+    "flag_effects": {
+        "0": {"target_question": 8, "add_text": "Зверь говорит: «Ты знал. И всё равно пришёл. Смело»."},
+        "1": {"target_question": 8, "add_text": "Зверь говорит: «Ты не вмешался. Это мудрость. Или трусость»."},
+        "2": {"target_question": 8, "add_text": "Зверь говорит: «Ты предал того, кто тебе доверился. Я запомню»."},
+    }
 }
 
-INFERNO = {
+
+# ========== ТЕМА 5: МАСТЕРСКАЯ ХУДОЖНИКА ==========
+DUNGEONS["artist"] = {
+    "name": "🎨 Мастерская Художника",
+    "phases": [
+        {
+            "name": "🖌️ Мастерская Художника",
+            "intro": "Вы находите мастерскую случайно. Дверь приоткрыта, из щели идёт свет — тёплый, мягкий. Внутри — холсты. Много. Одни стоят на мольбертах, другие висят на стенах. И все они двигаются. Не сильно. Тени. Но двигаются.",
+            "questions": [
+                {
+                    "text": "🖌️ Вы входите. Холсты двигаются, будто дышат. Из одного — маленькая тень выскальзывает и убегает под стол.",
+                    "options": [
+                        {"text": "Поймаю тень — посмотрю, что это", "soft": False},
+                        {"text": "Осмотрю холсты — что на них нарисовано?", "soft": True},
+                        {"text": "Пройду к большой картине — она светится", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Тень убегает, но оставляет след. Мокрый. Как краска. Вы идёте дальше.",
+                        "soft": "На холстах — пейзажи. Леса, горы, замки. И люди. Они смотрят на вас. Или это игра света.",
+                        "mixed": "Большая картина манит. Но подойти трудно — будто воздух густой. Как смола.",
+                    }
+                },
+                {
+                    "text": "🪑 На стуле лежит палитра. Краски свежие. Но стул пуст. А мастерская — заброшена. Уже давно.",
+                    "options": [
+                        {"text": "Возьму палитру — посмотрю поближе", "soft": False},
+                        {"text": "Осмотрюсь — есть ли следы недавнего присутствия", "soft": True},
+                        {"text": "Подойду к большому холсту — он светится", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Палитра тёплая. Как будто кто-то только что её держал. Но никого нет.",
+                        "soft": "Вы находите следы. Свежие. Свечи, хлеб, старая кружка. Кто-то жил здесь. Живёт.",
+                        "mixed": "Холст манит. Свет изнутри — ровный, спокойный. Как сердце. Как дыхание.",
+                    }
+                },
+                {
+                    "text": "💨 Из большой картины вырывается существо. Странное — будто нарисованное. Оно не нападает. Оно пугает. Шипит, машет руками. Ищет выход.",
+                    "options": [
+                        {"text": "Попробую его успокоить", "soft": True},
+                        {"text": "Нападу на него — оно опасно", "soft": False},
+                        {"text": "Позову напарника — решим вместе", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Существо замирает. Смотрит на вас. И… кивает. Будто поняло.",
+                        "soft": "Вы нападаете, и существо… плачет. Оно не хочет драться. Оно просто хочет домой.",
+                        "mixed": "Вы зовёте напарника. Существо смотрит на вас двоих. И что-то в его взгляде меняется.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🖼️ Нарисованные пейзажи",
+            "intro": "Вы подходите к картине. Она больше, чем казалась. Краска свежая, будто нанесли вчера. Вы протягиваете руку — и она уходит внутрь. Как в воду. И вы следуете.",
+            "questions": [
+                {
+                    "text": "🌄 Мир вокруг слишком идеальный. Трава не мнётся. Ветер не сдувает. Птицы летят, но не машут крыльями.",
+                    "options": [
+                        {"text": "Пойду дальше — разберусь по ходу", "soft": False},
+                        {"text": "Осмотрюсь — поищу того, кто здесь живёт", "soft": True},
+                        {"text": "Попробую что-то изменить — сломать идеальность", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Мир не реагирует. Он просто есть. И вы идёте. Как по музею.",
+                        "soft": "Вы находите тропу. Утоптанную. Кто-то ходит здесь часто.",
+                        "mixed": "Вы ломаете ветку. И она… исчезает. Растворяется. Будто её и не было.",
+                    }
+                },
+                {
+                    "text": "👤 На поляне — существа. Нарисованные. Они сидят у костра. И поют. Тихие песни, которых вы не знаете.",
+                    "options": [
+                        {"text": "Подойду — послушаю", "soft": True},
+                        {"text": "Обойду — не хочу мешать", "soft": True},
+                        {"text": "Спрошу — где найти Художника", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Они замолкают. Смотрят на вас. И один говорит: «Он ждал вас. Давно».",
+                        "soft": "Вы проходите мимо. Песня стихает. Но не обиженно. Просто тише.",
+                        "mixed": "Вы спрашиваете, и один из них показывает рукой. В сторону замка. На холме.",
+                    }
+                },
+                {
+                    "text": "🏚️ У дороги — дом. Маленький. Покосившийся. Но живой. Внутри — свет. И тихая песня. Кто-то поёт.",
+                    "options": [
+                        {"text": "Загляну внутрь", "soft": False},
+                        {"text": "Постучусь", "soft": True},
+                        {"text": "Остановлюсь и послушаю", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "В доме — старик. Он поёт. И не оборачивается. Будто вас нет.",
+                        "soft": "Вы стучите. Тишина. Потом: «Уходите. Он не вернётся». Голос старческий.",
+                        "mixed": "Вы слушаете. Песня стихает. Старик говорит: «Он там. В замке. И он счастлив».",
+                    }
+                },
+                {
+                    "text": "🛤️ Тропа расходится. Одна ведёт к замку на холме. Другая — в лес. Тёмный. Незваный.",
+                    "options": [
+                        {"text": "Пойду к замку — там Художник", "soft": False},
+                        {"text": "Пойду в лес — может, там что-то важное", "soft": True},
+                        {"text": "Спрошу напарника — что он думает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вы идёте к замку. Он всё ближе. И свет в его окнах — ярче.",
+                        "soft": "В лесу темно, но не страшно. Вы находите поляну. И на ней — старую кисть. Огромную.",
+                        "mixed": "Вы спрашиваете напарника. И тропа… исчезает. Остаётся только одна. К замку.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🏰 Сказочный замок",
+            "intro": "Замок стоит на холме. Он не настоящий. Он нарисованный. Но он живой — окна светятся, двери скрипят, а из труб идёт дым. Вы входите. В тронном зале — Художник. Он старый. Худой. Уставший. Но глаза у него светятся. Он счастлив.",
+            "questions": [
+                {
+                    "text": "🎨 Художник сидит на троне. Он смотрит на вас. И говорит: «Вы пришли. Я ждал. Но я не вернусь».",
+                    "options": [
+                        {"text": "Спрошу, почему он не вернётся", "soft": True},
+                        {"text": "Скажу прямо — он разрушает реальность", "soft": False},
+                        {"text": "Промолчу — пусть говорит сам", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он кивает. «Я знаю. Но там — пустота. А здесь — всё».",
+                        "soft": "Он опускает голову. «Там я умираю. А здесь — живу».",
+                        "mixed": "Он смотрит на вас долго. «Вы не понимаете. Никто не понимает».",
+                    }
+                },
+                {
+                    "text": "💔 Художник говорит: «Меня не приняли. Никто. Никогда. Я был странным. Я был лишним. А здесь — я нужен. Здесь — я творец».",
+                    "options": [
+                        {"text": "Скажу, что это иллюзия — реальность важнее", "soft": False},
+                        {"text": "Промолчу — это его боль", "soft": True},
+                        {"text": "Спрошу, пробовал ли он вернуться и изменить что-то", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он смеётся. Горько. «Менять? Что менять? Себя? Я пробовал. Не вышло».",
+                        "soft": "Он молчит. И в тишине слышно — где-то в замке — тихая песня. Кто-то поёт.",
+                        "mixed": "Он замирает. «Вернуться… и изменить… Я не думал об этом». Он говорит это впервые.",
+                    }
+                },
+                {
+                    "text": "⚖️ Художник говорит: «Вы можете уйти. Я не держу. Но если вы закроете портал — я умру. Здесь. В своём мире».",
+                    "options": [
+                        {"text": "Останусь — пусть решает сам", "soft": True},
+                        {"text": "Уйду — это не моя война", "soft": False},
+                        {"text": "Промолчу — пусть решает напарник", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он кивает. «Спасибо». И замок начинает светиться. Ярче. Ярче.",
+                        "soft": "Он смеётся. «Разумно. Но я останусь здесь. Навсегда».",
+                        "mixed": "Вы молчите, и Художник отступает. Он не ожидал, что вы решите вместе.",
+                    }
+                },
+                {
+                    "text": "🚪 Художник стоит у портала. За его спиной — его мир. Перед ним — реальность. Он говорит: «Я не хочу уходить. Но и вас держать не могу». У вас есть один момент, чтобы выбрать.",
+                    "options": [
+                        {"text": "Убедить его закрыть портал изнутри", "soft": True},
+                        {"text": "Уйти и оставить всё как есть", "soft": False},
+                        {"text": "Предложить ему нарисовать новую дверь", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вы говорите с ним. Долго. Он слушает. И — соглашается. Он поворачивается к порталу и кладёт ладонь на раму. Портал гаснет — тихо, без вспышек. Художник улыбается. Впервые за долгое время. И закрывает глаза.",
+                        "soft": "Вы уходите. Портал остаётся открытым. Существа продолжат вырываться. Художник останется счастливым. А реальность — пострадает. Медленно. Но пострадает.",
+                        "mixed": "Вы предлагаете нарисовать новую дверь. Он задумывается. Долго. Потом кивает. Берёт кисть. И рисует — прямо в воздухе. Дверь появляется. Маленькая. Тихая. Его мир остаётся целым. И ваш — тоже.",
+                    }
+                },
+            ]
+        },
+    ],
+    # Мини-последствия: Q3 (существо) → Q8 (Художник)
+    "flag_question": 2,
+    "flag_options": ["Попробую его успокоить", "Нападу на него — оно опасно", "Позову напарника — решим вместе"],
+    "flag_effects": {
+        "0": {"target_question": 7, "add_text": "Художник говорит: «Ты не испугался. Ты понял, что они не злые. Спасибо»."},
+        "1": {"target_question": 7, "add_text": "Художник говорит: «Ты ударил того, кто просто хотел домой. Я это видел»."},
+        "2": {"target_question": 7, "add_text": "Художник говорит: «Ты не решил сам. Но ты не один. Это тоже важно»."},
+    }
+}
+
+
+# ========== ТЕМА 6: ЦИТАДЕЛЬ ИНФЕРНО ==========
+DUNGEONS["inferno"] = {
     "name": "🔥 Цитадель Инферно",
     "phases": [
-        {"name": "🚪 Демонические врата", "questions": [
-            {"text": "🔥 Перед вами — врата из чёрного камня. Они дышат. Из щелей идёт пар.",
-             "options": [{"text": "Войду сразу — чего тянуть", "soft": False},
-                         {"text": "Осмотрю врата — поищу другой вход", "soft": True},
-                         {"text": "Спрошу напарника, что он думает", "soft": True}],
-             "bridges": {"same": "Врата открываются сами. За ними — лестница. Уходит вниз, в темноту.",
-                         "soft": "Вы находите сбоку дверь. Маленькую. Она приоткрыта. Кто-то прошёл здесь недавно.",
-                         "mixed": "Из темноты выходит страж. Он не демон. Он человек. Но глаза у него пустые."}},
-            {"text": "👤 Страж говорит: «Я открою вам путь. Но один из вас должен назвать своё самое большое сожаление. Вслух».",
-             "options": [{"text": "Назову первым", "soft": True},
-                         {"text": "Пусть напарник начнёт", "soft": False},
-                         {"text": "Откажусь — это личное", "soft": False}],
-             "bridges": {"same": "Страж кивает. Врата открываются. «Проходите. Он ждёт».",
-                         "soft": "Он слушает. Молча. Потом говорит: «Все так говорят. И все врут».",
-                         "mixed": "Он смеётся. «Сожаления — это роскошь. Здесь их нет»."}},
-            {"text": "🌑 Вы вошли. Внутри — зал. В центре — фигура. Она не двигается.",
-             "options": [{"text": "Подойду к ней", "soft": False},
-                         {"text": "Останусь у входа — подожду", "soft": True},
-                         {"text": "Осмотрю зал — поищу выходы", "soft": True}],
-             "bridges": {"same": "Фигура поднимает голову. «Наконец-то. Я ждал вас».",
-                         "soft": "В зале — семь дверей. Каждая ведёт вниз. Каждая — в свой грех.",
-                         "mixed": "Из фигуры поднимается дым. Он собирается в слова. «Выберите дверь»."}}
-        ]},
-        {"name": "🛤️ Тропа греха", "questions": [
-            {"text": "💰 Первая дверь — «Жадность». Внутри — гора золота. Голос шепчет: «Возьми сколько сможешь».",
-             "options": [{"text": "Возьму немного — на дорогу пригодится", "soft": False},
-                         {"text": "Не возьму ничего", "soft": True},
-                         {"text": "Спрошу напарника, что он думает", "soft": True}],
-             "bridges": {"same": "Золото рассыпается в пыль. Дверь закрывается. Вы идёте дальше.",
-                         "soft": "Голос замолкает. В тишине вы слышите чужое дыхание. Близко.",
-                         "mixed": "Пол дрожит. Из-под золота выползают тени. Они голодны."}},
-            {"text": "📖 Вторая дверь — «Знание». Внутри — книга. На странице — имя того, кто вас предаст.",
-             "options": [{"text": "Прочитаю", "soft": False},
-                         {"text": "Закрою книгу", "soft": True},
-                         {"text": "Сожгу её", "soft": False}],
-             "bridges": {"same": "Книга захлопывается сама. Из неё вылетает пепел. Он пахнет домом.",
-                         "soft": "Вы не успеваете прочитать. Страница пустеет. Остаётся только запах чернил.",
-                         "mixed": "Пламя пляшет. Кто-то кричит. Голос знакомый. Но вы не можете вспомнить чей."}},
-            {"text": "❤️‍🔥 Третья дверь — «Похоть». Внутри — человек. Тот, с кем у тебя была невзаимная любовь.",
-             "options": [{"text": "Подойду к нему", "soft": False},
-                         {"text": "Отвернусь и уйду", "soft": True},
-                         {"text": "Спрошу, зачем он здесь", "soft": False}],
-             "bridges": {"same": "Он исчезает. На полу остаётся кольцо. Простое. Но тёплое.",
-                         "soft": "Он говорит: «Ты забыл меня. Но я помню тебя». И растворяется.",
-                         "mixed": "Он смеётся. «Ты сам пришёл сюда. Ты хотел меня увидеть»."}},
-            {"text": "🔮 Четвёртая дверь — «Гордость». Внутри — сфера. Она показывает: в чём ты лучше других.",
-             "options": [{"text": "Посмотрю — интересно", "soft": False},
-                         {"text": "Отвернусь — я не лучше и не хуже", "soft": True},
-                         {"text": "Спрошу напарника, что он видит", "soft": True}],
-             "bridges": {"same": "Сфера гаснет. Из неё выходит дым. Он пахнет ладаном.",
-                         "soft": "Вы не смотрите. Сфера трескается сама. Осколки падают к ногам.",
-                         "mixed": "Сфера загорается ярче. В ней — ваше отражение. Оно улыбается. Не вы."}}
-        ]},
-        {"name": "🏚️ Цитадель Предательства", "questions": [
-            {"text": "🏚️ Вы вышли на развалины старого города. В центре — тот, кого вы видели вначале.",
-             "options": [{"text": "Спрошу, что он хочет", "soft": True},
-                         {"text": "Потребую отпустить нас", "soft": False},
-                         {"text": "Промолчу — пусть говорит первым", "soft": True}],
-             "bridges": {"same": "Он встаёт. «Я хочу одно. Ваше слово. Что вы готовы отдать друг за друга?»",
-                         "soft": "Он говорит: «Вы интереснее, чем я думал. Жаль будет вас убивать».",
-                         "mixed": "Он поднимает руку. Двери закрываются. Выхода нет."}},
-            {"text": "🔥 Он говорит: «Один из вас останется здесь. Навсегда. Другой уйдёт. Кто останется?»",
-             "options": [{"text": "Я", "soft": True},
-                         {"text": "Напарник", "soft": False},
-                         {"text": "Мы оба уйдём или оба останемся", "soft": True}],
-             "bridges": {"same": "Он кивает. «Слово сказано». Развалины начинают светиться.",
-                         "soft": "Он смеётся. «Хорошо. Я люблю тех, кто не боится».",
-                         "mixed": "Он хлопает в ладоши. «Трус. Но живой. Забавно»."}},
-            {"text": "💀 Он говорит: «Есть третий путь. Убей напарника — и получишь силу».",
-             "options": [{"text": "Откажусь — даже не думай", "soft": True},
-                         {"text": "Спрошу, что он предлагает конкретно", "soft": False},
-                         {"text": "Промолчу — пусть решает напарник", "soft": False}],
-             "bridges": {"same": "Он встаёт. «Достойно». Из земли вылетает искра. Она падает к вашим ногам.",
-                         "soft": "Он говорит: «Хорошо. Свободны». Стены рушатся. Вы бежите к выходу.",
-                         "mixed": "Он поднимает руку. Развалины дрожат. Пол трескается под ногами."}},
-            {"text": "🌅 Вы выбрались наружу. Цитадель рушится. Позади — огонь. Впереди — рассвет.",
-             "options": [{"text": "Обниму напарника — мы выжили", "soft": True},
-                         {"text": "Отойду в сторону — надо подумать", "soft": False},
-                         {"text": "Промолчу — не знаю, что сказать", "soft": True}],
-             "bridges": {"same": "Огонь гаснет. Пепел оседает на плечи. Вы идёте молча.",
-                         "soft": "Рассвет золотой. Где-то поют птицы. Впервые за всё время.",
-                         "mixed": "Вы идёте рядом. Но каждый — в свою сторону. И это нормально."}}
-        ]}
-    ]
+        {
+            "name": "🚪 Демонические врата",
+            "intro": "Земля здесь чёрная. Трава не растёт. Воздух горячий и сухой, будто кто-то дышит вам в затылок. Впереди — врата. Из чёрного камня. Они дышат. Из щелей идёт пар. И вы понимаете: это не метафора. Они действительно дышат.",
+            "questions": [
+                {
+                    "text": "🔥 Врата стоят перед вами. На арке вырезано: «Здесь начинается твой конец». Пар стелется по земле.",
+                    "options": [
+                        {"text": "Войду сразу — чего тянуть", "soft": False},
+                        {"text": "Осмотрю врата — поищу другой вход", "soft": True},
+                        {"text": "Спрошу напарника, что он думает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Врата открываются сами. За ними — лестница. Уходит вниз, в темноту. И оттуда тянет холодом. Не паром. Холодом.",
+                        "soft": "Вы находите сбоку дверь. Маленькую. Она приоткрыта. Кто-то прошёл здесь недавно. И не вернулся.",
+                        "mixed": "Из темноты выходит страж. Он не демон. Он человек. Но глаза у него пустые. Как у куклы.",
+                    }
+                },
+                {
+                    "text": "👤 Страж говорит: «Я открою вам путь. Но один из вас должен назвать своё самое большое сожаление. Вслух. И не соврать».",
+                    "options": [
+                        {"text": "Назову первым", "soft": True},
+                        {"text": "Совру — назову не то", "soft": False},
+                        {"text": "Откажусь — это личное", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Страж кивает. Врата открываются. «Проходите. Он ждёт». Он не говорит, кто «он».",
+                        "soft": "Он слушает. Молча. Потом говорит: «Все так говорят. И все врут». И отворачивается.",
+                        "mixed": "Он смеётся. «Сожаления — это роскошь. Здесь их нет». Он больше не смотрит на вас.",
+                    }
+                },
+                {
+                    "text": "🌑 Вы вошли. Внутри — зал. Пустой. В центре — фигура. Она не двигается. И не дышит. Но вы чувствуете: она смотрит. Именно на вас.",
+                    "options": [
+                        {"text": "Подойду к ней", "soft": False},
+                        {"text": "Останусь у входа — подожду", "soft": True},
+                        {"text": "Осмотрю зал — поищу выходы", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Фигура поднимает голову. «Наконец-то. Я ждал вас». Голос — как скрежет камня.",
+                        "soft": "В зале — семь дверей. Каждая ведёт вниз. Каждая — в свой грех. Вы не знаете, какой выбрать.",
+                        "mixed": "Из фигуры поднимается дым. Он собирается в слова. «Выберите дверь». И замолкает.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🛤️ Тропа греха",
+            "intro": "Семь дверей. Вы открываете первую. За ней — коридор. Вторую. Третью. Каждая ведёт вниз. И с каждым шагом становится темнее. Не снаружи. Внутри.",
+            "questions": [
+                {
+                    "text": "💰 Первая дверь — «Жадность». Внутри — гора золота. Голос шепчет: «Возьми сколько сможешь. Никто не узнает».",
+                    "options": [
+                        {"text": "Возьму немного — на дорогу пригодится", "soft": False},
+                        {"text": "Не возьму ничего", "soft": True},
+                        {"text": "Спрошу напарника, что он думает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Золото рассыпается в пыль. Дверь закрывается. Вы идёте дальше. Пыль на руках не оттирается.",
+                        "soft": "Голос замолкает. В тишине вы слышите чужое дыхание. Близко. Очень близко.",
+                        "mixed": "Пол дрожит. Из-под золота выползают тени. Они голодны. И они смотрят на вас.",
+                    }
+                },
+                {
+                    "text": "📖 Вторая дверь — «Знание». Внутри — книга. Открыта. На странице — имя того, кто вас предаст.",
+                    "options": [
+                        {"text": "Прочитаю", "soft": False},
+                        {"text": "Закрою книгу", "soft": True},
+                        {"text": "Сожгу её", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Книга захлопывается сама. Из неё вылетает пепел. Он пахнет домом. Странно.",
+                        "soft": "Вы не успеваете прочитать. Страница пустеет. Остаётся только запах чернил.",
+                        "mixed": "Пламя пляшет. Кто-то кричит. Голос знакомый. Но вы не можете вспомнить чей. И не хотите.",
+                    }
+                },
+                {
+                    "text": "❤️‍🔥 Третья дверь — «Похоть». Внутри — человек. Тот, с кем у тебя была невзаимная любовь. Он улыбается. Так, как не улыбался тогда.",
+                    "options": [
+                        {"text": "Подойду к нему", "soft": False},
+                        {"text": "Отвернусь и уйду", "soft": True},
+                        {"text": "Спрошу, зачем он здесь", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Он исчезает. На полу остаётся кольцо. Простое. Но тёплое. Как живое.",
+                        "soft": "Он говорит: «Ты забыл меня. Но я помню тебя». И растворяется. Медленно.",
+                        "mixed": "Он смеётся. «Ты сам пришёл сюда. Ты хотел меня увидеть». Он прав. И вы это знаете.",
+                    }
+                },
+                {
+                    "text": "🔮 Четвёртая дверь — «Гордость». Внутри — сфера. Она показывает: в чём ты лучше других. Всё, что ты о себе думаешь. И больше.",
+                    "options": [
+                        {"text": "Посмотрю — интересно", "soft": False},
+                        {"text": "Отвернусь — я не лучше и не хуже", "soft": True},
+                        {"text": "Разобью сферу — не хочу знать", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Сфера гаснет. Из неё выходит дым. Он пахнет ладаном. И чем-то ещё. Знакомым.",
+                        "soft": "Вы не смотрите. Сфера трескается сама. Осколки падают к ногам. Острые.",
+                        "mixed": "Сфера загорается ярче. В ней — ваше отражение. Оно улыбается. Но это не вы.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🏚️ Цитадель Предательства",
+            "intro": "Коридор заканчивается. Вы выходите на развалины старого города. Дома — как скелеты. Ветер гонит пыль по площади. В центре стоит тот, кого вы видели вначале. Он улыбается.",
+            "questions": [
+                {
+                    "text": "🏚️ Он говорит: «Вы прошли. Почти. Осталось последнее». Он не уточняет, что. Ждёт, что вы спросите.",
+                    "options": [
+                        {"text": "Спрошу, что он хочет", "soft": True},
+                        {"text": "Потребую отпустить нас", "soft": False},
+                        {"text": "Промолчу — пусть говорит первым", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он встаёт. «Я хочу одно. Ваше слово. Что вы готовы отдать друг за друга?»",
+                        "soft": "Он говорит: «Вы интереснее, чем я думал. Жаль будет вас убивать». И это не угроза. Это факт.",
+                        "mixed": "Он поднимает руку. Двери закрываются. Выхода нет. Совсем.",
+                    }
+                },
+                {
+                    "text": "🔥 Он говорит: «Один из вас останется здесь. Навсегда. Другой уйдёт. Кто останется?»",
+                    "options": [
+                        {"text": "Останусь я", "soft": True},
+                        {"text": "Откажусь выбирать — буду искать выход", "soft": False},
+                        {"text": "Соглашусь с условием, но попрошу отсрочку", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Он кивает. «Слово сказано». Развалины начинают светиться. Тускло. Красным.",
+                        "soft": "Он смеётся. «Хорошо. Я люблю тех, кто не боится». И отступает.",
+                        "mixed": "Он хлопает в ладоши. «Трус. Но живой. Забавно». И исчезает.",
+                    }
+                },
+                {
+                    "text": "💀 Он говорит: «Есть третий путь. Убей напарника — и получишь силу».",
+                    "options": [
+                        {"text": "Откажусь — даже не думай", "soft": True},
+                        {"text": "Спрошу, что он предлагает конкретно", "soft": False},
+                        {"text": "Промолчу — пусть решает напарник", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Он встаёт. «Достойно». Из земли вылетает искра. Она падает к вашим ногам. И гаснет.",
+                        "soft": "Он говорит: «Хорошо. Свободны». Стены рушатся. Вы бежите к выходу. Вдвоём.",
+                        "mixed": "Он поднимает руку. Развалины дрожат. Пол трескается под ногами. Но вы стоите.",
+                    }
+                },
+                {
+                    "text": "🌅 Вы выбрались наружу. Цитадель рушится. Позади — огонь. Впереди — рассвет.",
+                    "options": [
+                        {"text": "Присяду на землю — передохнуть", "soft": True},
+                        {"text": "Отойду в сторону — надо подумать", "soft": False},
+                        {"text": "Осмотрюсь — куда нас вынесло", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Огонь гаснет. Пепел оседает на плечи. Вы идёте молча. Сил говорить нет.",
+                        "soft": "Рассвет золотой. Где-то поют птицы. Впервые за всё время. Совсем рядом.",
+                        "mixed": "Вы идёте рядом. Но каждый — в свою сторону. И это нормально. Так бывает.",
+                    }
+                },
+            ]
+        },
+    ],
+    "flag_question": 3,
+    "flag_options": ["Возьму немного — на дорогу пригодится", "Не возьму ничего", "Спрошу напарника, что он думает"],
+    "flag_effects": {
+        "0": {"target_question": 7, "add_text": "Фигура говорит: «Ты взял золото. Я знал. Все берут. И все жалеют»."},
+        "1": {"target_question": 7, "add_text": "Фигура говорит: «Ты не взял. Странно. Может, ты не такой, как все»."},
+        "2": {"target_question": 7, "add_text": "Фигура говорит: «Ты не решил сам. И это — твоя слабость»."},
+    }
 }
 
-CATHEDRAL = {
+
+# ========== ТЕМА 7: СОБОР ТЁМНОЙ ВЛАДЫЧИЦЫ ==========
+DUNGEONS["cathedral"] = {
     "name": "🕯️ Собор Тёмной Владычицы",
     "phases": [
-        {"name": "💎 Кристальная тропа", "questions": [
-            {"text": "💎 Вы вышли на тропу из кристаллов. Они переливаются — розовым, синим, золотым.",
-             "options": [{"text": "Пойду быстрее — хочу услышать собор", "soft": False},
-                         {"text": "Остановлюсь и послушаю кристаллы", "soft": True},
-                         {"text": "Спрошу напарника, слышит ли он то же", "soft": True}],
-             "bridges": {"same": "Пение стихает. Тропа выводит к воротам. Они открыты.",
-                         "soft": "Один кристалл трескается под ногой. Из него выходит свет. И гаснет.",
-                         "mixed": "Пение становится громче. Кто-то идёт за вами. Но никого не видно."}},
-            {"text": "👤 У ворот стоит жрица. Она слепа. Но смотрит точно на вас.",
-             "options": [{"text": "Спрошу, что именно оставить", "soft": False},
-                         {"text": "Оставлю что-то своё — без слов", "soft": True},
-                         {"text": "Откажусь — ничего не оставлю", "soft": False}],
-             "bridges": {"same": "Жрица кивает. «Проходите. Она увидит вас».",
-                         "soft": "Она берёт вашу вещь. Кладёт в нишу. Ниша закрывается.",
-                         "mixed": "Она молчит. Потом говорит: «Все так говорят. И все возвращаются»."}},
-            {"text": "🕯️ Внутри собора — темно. Свечи горят сами. На алтаре — статуя женщины из тьмы.",
-             "options": [{"text": "Подойду к алтарю", "soft": False},
-                         {"text": "Останусь у входа — осмотрюсь", "soft": True},
-                         {"text": "Спрошу напарника, что он чувствует", "soft": True}],
-             "bridges": {"same": "Статуя открывает глаза. «Я ждала вас. Обоих».",
-                         "soft": "Свечи дрожат. Тени на стенах двигаются. Будто живые.",
-                         "mixed": "Из статуи выходит голос. «Вы пришли за ответом. Но ответ — это вы»."}}
-        ]},
-        {"name": "🌉 Мост над Бездной", "questions": [
-            {"text": "🌉 Владычица говорит: «Пройдите мост. Он тонкий. Не смотрите вниз».",
-             "options": [{"text": "Пойду первым", "soft": False},
-                         {"text": "Пойдём вместе, держась за руки", "soft": True},
-                         {"text": "Пусть напарник идёт первым", "soft": False}],
-             "bridges": {"same": "Мост не дрогнул. Вы на другой стороне. Дверь открыта.",
-                         "soft": "Мост качается. Но вы идёте ровно. Бездна молчит.",
-                         "mixed": "Один из вас смотрит вниз. И видит там что-то. Себя."}},
-            {"text": "👁️ В бездне — зеркало. Оно показывает вас. Такими, какими могли бы стать.",
-             "options": [{"text": "Посмотрю внимательно", "soft": False},
-                         {"text": "Отвернусь — это ложь", "soft": True},
-                         {"text": "Спрошу напарника, что он видит", "soft": True}],
-             "bridges": {"same": "Зеркало трескается. Осколки падают в бездну. Без звука.",
-                         "soft": "Вы не смотрите. Зеркало гаснет само. И бездна замолкает.",
-                         "mixed": "Отражение улыбается. Оно знает что-то, чего не знаете вы."}},
-            {"text": "🕯️ На середине моста — свеча. Она горит синим.",
-             "options": [{"text": "Затушу", "soft": False},
-                         {"text": "Оставлю гореть", "soft": True},
-                         {"text": "Спрошу напарника, что он думает", "soft": True}],
-             "bridges": {"same": "Огонь гаснет. Стало темнее. Но видно дальше.",
-                         "soft": "Огонь горит. Тепло разливается по телу. И страх уходит.",
-                         "mixed": "Пламя дрожит. Оно смотрит на вас. Оно ждёт."}},
-            {"text": "🌑 Владычица говорит: «Ты можешь спросить меня об одном. Что хочешь знать?»",
-             "options": [{"text": "Спрошу о своём будущем", "soft": False},
-                         {"text": "Спрошу о напарнике — кто он на самом деле", "soft": False},
-                         {"text": "Откажусь — не всё нужно знать", "soft": True}],
-             "bridges": {"same": "Она смеётся. «Будущее — это ложь, которую мы рассказываем себе».",
-                         "soft": "Она молчит. Долго. Потом говорит: «Ты мудрее, чем кажешься».",
-                         "mixed": "Она говорит: «Он не тот, кем кажется. Но и ты — не тот»."}}
-        ]},
-        {"name": "🌙 Покои Ночи", "questions": [
-            {"text": "🌙 Владычица ведёт вас в свои покои. Здесь нет света. Только тьма. Но вы видите всё.",
-             "options": [{"text": "Спрошу, зачем мы здесь", "soft": True},
-                         {"text": "Промолчу и буду ждать", "soft": True},
-                         {"text": "Потребую объяснений", "soft": False}],
-             "bridges": {"same": "Она садится на трон. «Здесь решается всё».",
-                         "soft": "Она говорит: «Ты боишься. Это хорошо. Страх — это честность».",
-                         "mixed": "Она поднимает руку. Стены начинают дышать."}},
-            {"text": "🖤 Она говорит: «Я могу сделать одного из вас счастливым. А другого — несчастным. Кого выбрать?»",
-             "options": [{"text": "Пусть счастлив будет напарник", "soft": True},
-                         {"text": "Пусть счастлив буду я", "soft": False},
-                         {"text": "Откажусь — мы либо оба, либо никто", "soft": True}],
-             "bridges": {"same": "Она кивает. «Слово сказано». Тьма сгущается.",
-                         "soft": "Она улыбается. «Хорошо. Я люблю тех, кто не боится».",
-                         "mixed": "Она смеётся. «Все выбирают одно. И все жалеют»."}},
-            {"text": "🔥 Она говорит: «Предай свои принципы — и вы оба сможете уйти. Прямо сейчас».",
-             "options": [{"text": "Откажусь — принципы не продаются", "soft": True},
-                         {"text": "Спрошу, что именно нужно предать", "soft": False},
-                         {"text": "Промолчу — пусть решает напарник", "soft": False}],
-             "bridges": {"same": "Она встаёт. «Достойно». Свет пробивается через тьму.",
-                         "soft": "Она говорит: «Хорошо. Свободны». Стены рушатся. Вы бежите к выходу.",
-                         "mixed": "Она поднимает руку. Собор дрожит. Пол трескается под ногами."}},
-            {"text": "🌅 Собор рушится за спиной. Осколки кристаллов разлетаются по траве.",
-             "options": [{"text": "Возьму напарника за руку", "soft": True},
-                         {"text": "Отойду на пару шагов — надо выдохнуть", "soft": False},
-                         {"text": "Сяду на камень — ноги не держат", "soft": True}],
-             "bridges": {"same": "Кристаллы гаснут один за другим. На траве остаётся только свет.",
-                         "soft": "Утро розовое. Тёплое. Пахнет мокрой землёй и свободой.",
-                         "mixed": "Тропа расходится в две стороны. И это впервые не кажется неправильным."}}
-        ]}
-    ]
+        {
+            "name": "💎 Кристальная тропа",
+            "intro": "Тропа начинается сразу за лесом. Кристаллы растут прямо из земли — высокие, как деревья. Они переливаются розовым, синим, золотым. И поют. Каждый — своим голосом.",
+            "questions": [
+                {
+                    "text": "💎 Тропа уходит вверх, к собору. Пение кристаллов становится громче. Один из них трещит под ногой. Свет из трещины бьёт в небо.",
+                    "options": [
+                        {"text": "Пойду быстрее — хочу услышать собор", "soft": False},
+                        {"text": "Остановлюсь и послушаю кристаллы", "soft": True},
+                        {"text": "Подниму один кристалл — рассмотрю", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Пение стихает. Тропа выводит к воротам. Они открыты. Вас ждут. Странно, но вы это чувствуете.",
+                        "soft": "Один кристалл трескается под ногой. Из него выходит свет. Тёплый. И гаснет.",
+                        "mixed": "Пение становится громче. Кто-то идёт за вами. Но когда оборачиваетесь — никого.",
+                    }
+                },
+                {
+                    "text": "👤 У ворот стоит жрица. Она слепа. Она говорит: «Владычица ждёт. Оставь здесь то, что тебе дорого».",
+                    "options": [
+                        {"text": "Спрошу, что именно нужно оставить", "soft": False},
+                        {"text": "Оставлю что-то своё — без слов", "soft": True},
+                        {"text": "Откажусь — ничего не оставлю", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Жрица кивает. «Проходите. Она увидит вас». Дверь открывается сама.",
+                        "soft": "Она берёт вашу вещь. Кладёт в нишу. Ниша закрывается. И вы слышите — там что-то шевелится.",
+                        "mixed": "Она молчит. Потом говорит: «Все так говорят. И все возвращаются». Она не улыбается.",
+                    }
+                },
+                {
+                    "text": "🕯️ Внутри собора — темно. Свечи горят сами. На алтаре — статуя женщины из тьмы. Она прекрасна. И страшна. Одновременно.",
+                    "options": [
+                        {"text": "Подойду к алтарю", "soft": False},
+                        {"text": "Останусь у входа — осмотрюсь", "soft": True},
+                        {"text": "Спрошу напарника, что он чувствует", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Статуя открывает глаза. «Я ждала вас. Обоих». Голос — как шёпот ветра.",
+                        "soft": "Свечи дрожат. Тени на стенах двигаются. Будто живые. Они наблюдают.",
+                        "mixed": "Из статуи выходит голос. «Вы пришли за ответом. Но ответ — это вы». И замолкает.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🌉 Мост над Бездной",
+            "intro": "Владычица ведёт вас вглубь собора. Внизу — бездна. Не пропасть. Именно бездна. Она дышит. Через неё перекинут мост. Тонкий. Как нить.",
+            "questions": [
+                {
+                    "text": "🌉 Владычица говорит: «Пройдите мост. Он тонкий. Не смотрите вниз». Она не шутит.",
+                    "options": [
+                        {"text": "Пойду первым", "soft": False},
+                        {"text": "Пойдём вместе, держась за руки", "soft": True},
+                        {"text": "Загляну вниз — интересно", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Мост не дрогнул. Вы на другой стороне. Дверь открыта. И за ней — тишина.",
+                        "soft": "Мост качается. Но вы идёте ровно. Бездна молчит. Она уважает смелых.",
+                        "mixed": "Один из вас смотрит вниз. И видит там что-то. Себя. Такого, каким был когда-то.",
+                    }
+                },
+                {
+                    "text": "👁️ В бездне — зеркало. Оно показывает вас. Такими, какими могли бы стать. Если бы выбрали иначе.",
+                    "options": [
+                        {"text": "Посмотрю внимательно", "soft": False},
+                        {"text": "Отвернусь — это ложь", "soft": True},
+                        {"text": "Плюну вниз — знаю, что это", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Зеркало трескается. Осколки падают в бездну. Без звука. Совсем без звука.",
+                        "soft": "Вы не смотрите. Зеркало гаснет само. И бездна замолкает. На время.",
+                        "mixed": "Отражение улыбается. Оно знает что-то, чего не знаете вы. И не скажет.",
+                    }
+                },
+                {
+                    "text": "🕯️ На середине моста — свеча. Горит синим. Пламя не двигается. Совсем. Будто застыло.",
+                    "options": [
+                        {"text": "Затушу", "soft": False},
+                        {"text": "Оставлю гореть", "soft": True},
+                        {"text": "Возьму с собой", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Огонь гаснет. Стало темнее. Но видно дальше. Странно, но так.",
+                        "soft": "Огонь горит. Тепло разливается по телу. И страх уходит. Не весь. Но уходит.",
+                        "mixed": "Пламя дрожит. Оно смотрит на вас. Оно ждёт. Чего — неизвестно.",
+                    }
+                },
+                {
+                    "text": "🌑 Владычица говорит: «Ты можешь спросить меня об одном. Что хочешь знать?»",
+                    "options": [
+                        {"text": "Спрошу о своём будущем", "soft": False},
+                        {"text": "Спрошу о напарнике — кто он на самом деле", "soft": False},
+                        {"text": "Откажусь — не всё нужно знать", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Она смеётся. «Будущее — это ложь, которую мы рассказываем себе». И отворачивается.",
+                        "soft": "Она молчит. Долго. Потом говорит: «Ты мудрее, чем кажешься». И это правда.",
+                        "mixed": "Она говорит: «Он не тот, кем кажется. Но и ты — не тот». И исчезает.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🌙 Покои Ночи",
+            "intro": "Владычица ведёт вас в свои покои. Здесь нет света. Только тьма. Но вы видите всё. И это самое странное.",
+            "questions": [
+                {
+                    "text": "🌙 Она садится на трон. Тьма вокруг сгущается. Она ждёт. Вы чувствуете — это последний разговор.",
+                    "options": [
+                        {"text": "Спрошу, зачем мы здесь", "soft": True},
+                        {"text": "Промолчу и буду ждать", "soft": True},
+                        {"text": "Потребую объяснений", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Она садится на трон. «Здесь решается всё». Голос — тихий. Но слышно каждое слово.",
+                        "soft": "Она говорит: «Ты боишься. Это хорошо. Страх — это честность». Она не улыбается.",
+                        "mixed": "Она поднимает руку. Стены начинают дышать. Медленно. Ровно. Как живое существо.",
+                    }
+                },
+                {
+                    "text": "🖤 Она говорит: «Я могу сделать одного из вас счастливым. А другого — несчастным. Кого выбрать?»",
+                    "options": [
+                        {"text": "Пусть счастлив будет напарник", "soft": True},
+                        {"text": "Пусть счастлив буду я", "soft": False},
+                        {"text": "Откажусь — мы либо оба, либо никто", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Она кивает. «Слово сказано». Тьма сгущается. И вы чувствуете, что что-то изменилось.",
+                        "soft": "Она улыбается. «Хорошо. Я люблю тех, кто не боится». И отступает.",
+                        "mixed": "Она смеётся. «Все выбирают одно. И все жалеют». Она знает, о чём говорит.",
+                    }
+                },
+                {
+                    "text": "🔥 Она говорит: «Предай свои принципы — и вы оба сможете уйти. Прямо сейчас».",
+                    "options": [
+                        {"text": "Откажусь — принципы не продаются", "soft": True},
+                        {"text": "Спрошу, что именно нужно предать", "soft": False},
+                        {"text": "Соглашусь — что тут такого", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Она встаёт. «Достойно». Свет пробивается через тьму. Впервые. И ослепляет.",
+                        "soft": "Она говорит: «Хорошо. Свободны». Стены рушатся. Вы бежите к выходу. Успеваете.",
+                        "mixed": "Она поднимает руку. Собор дрожит. Пол трескается под ногами. Но вы стоите.",
+                    }
+                },
+                {
+                    "text": "🌅 Собор рушится за спиной. Осколки кристаллов разлетаются по траве. Розовые, синие, золотые. Как в первый раз.",
+                    "options": [
+                        {"text": "Возьму напарника за руку", "soft": True},
+                        {"text": "Отойду на пару шагов — надо выдохнуть", "soft": False},
+                        {"text": "Сяду на камень — ноги не держат", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Кристаллы гаснут один за другим. На траве остаётся только свет. И тишина.",
+                        "soft": "Утро розовое. Тёплое. Пахнет мокрой землёй и свободой. И это лучший запах на свете.",
+                        "mixed": "Тропа расходится в две стороны. И это впервые не кажется неправильным. Так и должно быть.",
+                    }
+                },
+            ]
+        },
+    ],
+    "flag_question": 5,
+    "flag_options": ["Затушу", "Оставлю гореть", "Возьму с собой"],
+    "flag_effects": {
+        "0": {"target_question": 7, "add_text": "Владычица говорит: «Ты погасил свет. В моём соборе. Смело. И глупо»."},
+        "1": {"target_question": 7, "add_text": "Владычица говорит: «Ты оставил огонь. Он горит до сих пор. Спасибо»."},
+        "2": {"target_question": 7, "add_text": "Владычица говорит: «Ты унёс мой свет. Но он не твой. Верни»."},
+    }
 }
 
-VALLEY = {
+
+# ========== ТЕМА 8: НЕПРОХОДИМАЯ ДОЛИНА ==========
+DUNGEONS["valley"] = {
     "name": "🏔️ Непроходимая долина",
     "phases": [
-        {"name": "🛤️ Дорога в долину", "questions": [
-            {"text": "🏔️ Перед вами — единственная тропа в долину. Узкая, каменистая.",
-             "options": [{"text": "Пойду первым — проверю тропу", "soft": False},
-                         {"text": "Пойдём рядом, шаг в шаг", "soft": True},
-                         {"text": "Подожду, пока туман рассеется", "soft": True}],
-             "bridges": {"same": "Тропа выводит к развилке. Камень, на котором вы стоите, тёплый.",
-                         "soft": "Туман не расходится. Он будто ждёт, когда вы сделаете шаг.",
-                         "mixed": "Из-под ног сыпется камень. Он падает вниз. Долго. Ни звука."}},
-            {"text": "👤 На тропе — старик. Он сидит на камне. «Проводник нужен?»",
-             "options": [{"text": "Найму — с проводником безопаснее", "soft": True},
-                         {"text": "Откажусь — сами дойдём", "soft": False},
-                         {"text": "Спрошу напарника, что он думает", "soft": True}],
-             "bridges": {"same": "Старик идёт впереди. Он не оглядывается. Ни разу.",
-                         "soft": "Он остаётся на камне. «Дураки. Все умирают». И замолкает.",
-                         "mixed": "Он смотрит на вас. Долго. Потом встаёт и идёт молча."}},
-            {"text": "🌫️ Ночь. Вы разбили лагерь у входа в долину. Из тумана — звуки. Шаги. Много.",
-             "options": [{"text": "Разбужу напарника", "soft": True},
-                         {"text": "Пойду проверю один", "soft": False},
-                         {"text": "Притворюсь спящим и буду слушать", "soft": True}],
-             "bridges": {"same": "Шаги стихают к рассвету. Утром — тишина.",
-                         "soft": "Вы лежите без сна. Что-то ходит вокруг костра. Всю ночь.",
-                         "mixed": "Кто-то стоит над вами. Вы чувствуете дыхание. Потом — тишина."}}
-        ]},
-        {"name": "🧱 Каменный лабиринт", "questions": [
-            {"text": "🧱 Вы вошли в лабиринт. Три коридора. На каждом — символ: солнце, луна, звезда.",
-             "options": [{"text": "Пойду к солнцу", "soft": False},
-                         {"text": "Пойду к луне", "soft": True},
-                         {"text": "Пойду к звезде", "soft": True}],
-             "bridges": {"same": "Коридор сужается. Впереди — свет. И голоса.",
-                         "soft": "Коридор идёт вниз. Становится холоднее. Стены влажные.",
-                         "mixed": "Коридор петляет. Вы возвращаетесь к развилке. Но символов уже нет."}},
-            {"text": "🕳️ На полу — трещина. Из неё идёт тёплый воздух.",
-             "options": [{"text": "Спущусь первым", "soft": False},
-                         {"text": "Пусть он спустится — я подожду", "soft": False},
-                         {"text": "Спустимся вместе", "soft": True}],
-             "bridges": {"same": "Внизу — пещера. На стенах — рисунки. Люди. Драконы. Война.",
-                         "soft": "Трещина расширяется. Вы падаете на камень. Целы.",
-                         "mixed": "Внизу темно. Но слышно дыхание. Чьё-то. Большое."}},
-            {"text": "⚙️ Перед вами — механизм. Три рычага. Надпись: «Один — жизнь. Два — смерть».",
-             "options": [{"text": "Дёрну первый", "soft": False},
-                         {"text": "Дёрну второй", "soft": True},
-                         {"text": "Не буду трогать — поищем обход", "soft": True}],
-             "bridges": {"same": "Пол открывается. Вы падаете. Вниз. В воду. Холодную.",
-                         "soft": "Камень уходит в сторону. Тайный проход. Узкий, но проходимый.",
-                         "mixed": "Рычаг ломается. Механизм смеётся. Или это эхо?"}},
-            {"text": "🌊 Впереди — река. Подземная. Течение быстрое. На другом берегу — дверь.",
-             "options": [{"text": "Переплыву", "soft": False},
-                         {"text": "Поищу мост", "soft": True},
-                         {"text": "Свяжу верёвку и переберусь с её помощью", "soft": True}],
-             "bridges": {"same": "Вода ледяная. Но вы на берегу. Дверь открыта.",
-                         "soft": "Мост найден. Он старый. Скрипит. Но держит.",
-                         "mixed": "Течение сбивает. Вы хватаетесь за камень. Пальцы скользят."}}
-        ]},
-        {"name": "💰 Сокровищница Гильдии Авантюристов", "questions": [
-            {"text": "💰 Вы вошли в зал. Горы золота. Оружие. Артефакты. И тишина.",
-             "options": [{"text": "Возьму немного — на память", "soft": False},
-                         {"text": "Не возьму ничего — это не наше", "soft": True},
-                         {"text": "Спрошу напарника, что он думает", "soft": True}],
-             "bridges": {"same": "Золото тускнеет. Оно здесь давно. Слишком давно.",
-                         "soft": "Вы идёте дальше. Сокровища остаются за спиной. Ждут.",
-                         "mixed": "Одна монета падает. Звон идёт по залу. Долго. Слишком долго."}},
-            {"text": "👑 На троне из золота — скелет. В руках — свиток.",
-             "options": [{"text": "Прочитаю свиток", "soft": False},
-                         {"text": "Оставлю — не хочу знать", "soft": True},
-                         {"text": "Спрошу напарника, что он думает", "soft": True}],
-             "bridges": {"same": "Последнее имя — стёрто. Будто кто-то не хотел, чтобы вы его прочли.",
-                         "soft": "Свиток рассыпается в пыль. Пыль пахнет железом.",
-                         "mixed": "Ваше имя появилось на свитке. Само. Буквы свежие."}},
-            {"text": "🗡️ Голос из темноты: «Если возьмёте хоть что-то — один из вас останется здесь. Навсегда».",
-             "options": [{"text": "Откажемся от сокровищ — оба уйдём", "soft": True},
-                         {"text": "Возьму и останусь сам", "soft": True},
-                         {"text": "Возьму и оставлю напарника", "soft": False}],
-             "bridges": {"same": "Голос замолкает. Золото гаснет. Тьма сгущается.",
-                         "soft": "Скелет на троне кивает. «Достойно». Дверь открывается.",
-                         "mixed": "Трон трескается. Из него выходит тень. Она смотрит на вас."}},
-            {"text": "🌅 Вы выбрались из долины. Позади — лабиринт. Впереди — степь. И ветер.",
-             "options": [{"text": "Возьму напарника за плечо — молча", "soft": True},
-                         {"text": "Отойду на пару шагов — подышать", "soft": False},
-                         {"text": "Сяду прямо на траву — ноги гудят", "soft": True}],
-             "bridges": {"same": "Ветер стихает. Долина за спиной оседает. Навсегда.",
-                         "soft": "Солнце встаёт. Степь золотая. Пахнет полынью и свободой.",
-                         "mixed": "Трава холодная. Но небо чистое. Впервые за долгое время."}}
-        ]}
-    ]
+        {
+            "name": "🛤️ Дорога в долину",
+            "intro": "Дорога упирается в скалы, и дальше остаётся только узкая тропа — одна, другой нет. Туман стоит стеной у входа в долину, и в этой тишине слышно собственное сердце. Оно бьётся чаще, чем должно.",
+            "questions": [
+                {
+                    "text": "🏔️ Тропа узкая, слева — обрыв, справа — отвесная скала. А впереди — туман, который не расходится, будто ждёт, когда вы сделаете шаг.",
+                    "options": [
+                        {"text": "Пойду первым — проверю тропу", "soft": False},
+                        {"text": "Пойдём рядом, шаг в шаг", "soft": True},
+                        {"text": "Подожду, пока туман рассеется", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Тропа выводит к развилке, и камень под ногами оказывается тёплым — будто кто-то сидел здесь только что и ушёл.",
+                        "soft": "Туман не расходится. Он будто ждёт, когда вы сделаете первый шаг. И вы делаете.",
+                        "mixed": "Из-под ног сыпется камень, и он падает вниз долго, очень долго — и не достигает дна.",
+                    }
+                },
+                {
+                    "text": "👤 На тропе сидит старик. Он не двигается и смотрит на вас внимательно. «Проводник нужен?» — спрашивает он.",
+                    "options": [
+                        {"text": "Найму — с проводником безопаснее", "soft": True},
+                        {"text": "Откажусь — сами дойдём", "soft": False},
+                        {"text": "Расспрошу его о долине — что там?", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Старик идёт впереди и не оглядывается ни разу — будто знает, что вы идёте следом, будто иначе и быть не может.",
+                        "soft": "Он остаётся на камне. «Дураки. Все умирают», — говорит он и замолкает. Кажется, он умер ещё до вашего прихода.",
+                        "mixed": "Он смотрит на вас долго, потом встаёт и идёт молча. Вы — следом. Тоже молча.",
+                    }
+                },
+                {
+                    "text": "🌫️ Ночь. Вы разбили лагерь у входа в долину, и из тумана доносятся звуки шагов. Много шагов, и они приближаются.",
+                    "options": [
+                        {"text": "Выйду проверить один", "soft": False},
+                        {"text": "Притворюсь спящим и буду слушать", "soft": True},
+                        {"text": "Разожгу костёр ярче — отпугну", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Шаги стихают к рассвету, и утром наступает тишина — обычная, будто ночью ничего не было. Но вы знаете — было.",
+                        "soft": "Вы лежите без сна, и что-то ходит вокруг костра всю ночь. Утром костёр потушен, хотя вы его не тушили.",
+                        "mixed": "Кто-то стоит над вами, вы чувствуете дыхание, а потом — тишина и утро. Вы живы. Пока.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🧱 Каменный лабиринт",
+            "intro": "Туман расходится — не сам, его разгоняет ветер. За туманом открывается лабиринт: каменный, древний, и тишина в нём особая, гулкая, как в склепе.",
+            "questions": [
+                {
+                    "text": "🧱 Перед вами три коридора, и на каждом вытиснен символ: солнце, луна, звезда. Символы свежие — кто-то сделал их недавно.",
+                    "options": [
+                        {"text": "Пойду к солнцу", "soft": False},
+                        {"text": "Пойду к луне", "soft": True},
+                        {"text": "Пойду к звезде", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Коридор сужается, и впереди появляется свет и голоса. Они говорят о вас на вашем языке, но вы их не знаете.",
+                        "soft": "Коридор идёт вниз, становится холоднее, стены влажные, и вы слышите, как капает вода — регулярно, как метроном.",
+                        "mixed": "Коридор петляет, и вы возвращаетесь к развилке. Но символов уже нет. Совсем.",
+                    }
+                },
+                {
+                    "text": "🕳️ В полу — трещина, из которой идёт тёплый воздух. Он пахнет землёй и чем-то ещё — старым, очень старым.",
+                    "options": [
+                        {"text": "Спущусь первым", "soft": False},
+                        {"text": "Осмотрю трещину — проверю глубину", "soft": True},
+                        {"text": "Спустимся вместе", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Внизу — пещера, на стенах которой видны древние рисунки: люди, драконы, война. И среди них — вы двое, нарисованные сотни лет назад.",
+                        "soft": "Трещина расширяется, вы падаете на камень и остаётесь целы. Но что-то внутри сломалось. Не кость — что-то другое.",
+                        "mixed": "Внизу темно, но слышно дыхание — чьё-то большое, ровное, как у спящего.",
+                    }
+                },
+                {
+                    "text": "⚙️ Перед вами — старый механизм с двумя рычагами. Надпись стёрта, но вы разбираете: «Один — жизнь. Другой — смерть».",
+                    "options": [
+                        {"text": "Дёрну первый", "soft": False},
+                        {"text": "Дёрну второй", "soft": True},
+                        {"text": "Не буду трогать — поищем обход", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Пол открывается, и вы падаете вниз, в ледяную воду. Но выбираетесь. Живые.",
+                        "soft": "Камень уходит в сторону, открывая тайный проход — узкий, но проходимый. И вы идёте, один за другим.",
+                        "mixed": "Рычаг ломается, и механизм смеётся. Или это эхо? Вы не знаете и не хотите знать.",
+                    }
+                },
+                {
+                    "text": "🌊 Впереди — подземная река с быстрым течением. На другом берегу вы видите закрытую древнюю дверь.",
+                    "options": [
+                        {"text": "Переплыву", "soft": False},
+                        {"text": "Поищу мост", "soft": True},
+                        {"text": "Свяжу верёвку и переберусь с её помощью", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вода ледяная, но вы на берегу. Дверь открыта — сама, никто её не открывал. Но она открыта.",
+                        "soft": "Мост найден. Он старый и скрипит, но держит. Держит вас. Двоих.",
+                        "mixed": "Течение сбивает с ног, вы хватаетесь за камень, пальцы скользят. Но вы держитесь. Каким-то чудом.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "💰 Сокровищница Гильдии Авантюристов",
+            "intro": "Дверь ведёт в огромный светлый зал, полный золота. Оружие, артефакты, монеты — всё, о чём мечтают авантюристы. И тишина. Абсолютная тишина.",
+            "questions": [
+                {
+                    "text": "💰 Горы золота, оружие на стенах, артефакты на постаментах. Всё блестит, и при этом — ни одной живой души. Только вы. И оно.",
+                    "options": [
+                        {"text": "Возьму немного — на память", "soft": False},
+                        {"text": "Не возьму ничего — это не наше", "soft": True},
+                        {"text": "Осмотрю артефакты — что здесь есть?", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Золото тускнеет. Оно здесь давно, слишком давно. И оно мёртвое, как и всё вокруг.",
+                        "soft": "Вы идёте дальше, и сокровища остаются за спиной. Ждут. Но вы не оборачиваетесь. И правильно.",
+                        "mixed": "Одна монета падает, и звон идёт по залу долго, слишком долго. И не стихает.",
+                    }
+                },
+                {
+                    "text": "👑 На троне из золота сидит скелет, и в руках у него свиток. На свитке — имена всех, кто дошёл до этого зала. И умер.",
+                    "options": [
+                        {"text": "Прочитаю свиток", "soft": False},
+                        {"text": "Оставлю — не хочу знать", "soft": True},
+                        {"text": "Похороню скелет — по-человечески", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Последнее имя стёрто, будто кто-то не хотел, чтобы вы его прочли. Или боялся.",
+                        "soft": "Свиток рассыпается в пыль, и пыль пахнет железом и чем-то ещё — старым, очень старым.",
+                        "mixed": "Ваше имя появилось на свитке само. Буквы свежие, чернила ещё блестят.",
+                    }
+                },
+                {
+                    "text": "🗡️ Из темноты звучит голос: «Если возьмёте хоть что-то — один из вас останется здесь навсегда. Второй уйдёт».",
+                    "options": [
+                        {"text": "Откажемся от сокровищ — оба уйдём", "soft": True},
+                        {"text": "Возьму и останусь сам", "soft": True},
+                        {"text": "Возьму и оставлю напарника", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Голос замолкает, золото гаснет, тьма сгущается. Но вы живы. И оба свободны.",
+                        "soft": "Скелет на троне кивает. «Достойно». Дверь открывается, и вы уходите. Вдвоём.",
+                        "mixed": "Трон трескается, и из него выходит тень. Она смотрит на вас долго, потом исчезает.",
+                    }
+                },
+                {
+                    "text": "🌅 Вы выбрались из долины. Позади — лабиринт, впереди — степь и ветер. Настоящий, свободный.",
+                    "options": [
+                        {"text": "Присяду на траву — передохну", "soft": True},
+                        {"text": "Отойду на пару шагов — подышать", "soft": False},
+                        {"text": "Осмотрюсь — куда нас вынесло", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Ветер стихает, и долина за спиной оседает. Навсегда. Будто и не было её.",
+                        "soft": "Солнце встаёт, степь золотая, и пахнет полынью и свободой. Это лучший запах на свете.",
+                        "mixed": "Трава холодная, но небо чистое. Впервые за долгое время вы дышите полной грудью.",
+                    }
+                },
+            ]
+        },
+    ],
+    "flag_question": 1,
+    "flag_options": ["Найму — с проводником безопаснее", "Откажусь — сами дойдём", "Расспрошу его о долине — что там?"],
+    "flag_effects": {
+        "0": {"target_question": 9, "add_text": "Скелет говорит: «Ты доверился незнакомцу. Это редкость. И глупость. И смелость»."},
+        "1": {"target_question": 9, "add_text": "Скелет говорит: «Ты не доверился. Разумно. Но одиноко»."},
+        "2": {"target_question": 9, "add_text": "Скелет говорит: «Ты хотел знать. Это хорошо. Знание — сила»."},
+    }
 }
 
-DUNGEONS = {
-    "forest": FOREST, "bay": BAY, "desert": DESERT,
-    "jungle": JUNGLE, "inferno": INFERNO,
-    "cathedral": CATHEDRAL, "valley": VALLEY
+
+# ========== ТЕМА 9: ЗИККУРАТ ЛОЖНЫХ ИДОЛОВ ==========
+DUNGEONS["ziggurat"] = {
+    "name": "🏛️ Зиккурат Ложных Идолов",
+    "phases": [
+        {
+            "name": "🔬 Лаборатория странного учёного",
+            "intro": "Вы спускаетесь в подвал старого здания и находите то, что меньше всего ожидали: лабораторию. Она заброшена, но работает — где-то гудит аппаратура, мигают лампы. На столе лежит дневник. Открытый на последней странице. Будто его только что читали.",
+            "questions": [
+                {
+                    "text": "🔬 Последняя запись в дневнике: «Я нашёл то, что искал. Но это не то, чем кажется». Чернила свежие, будто писали сегодня утром.",
+                    "options": [
+                        {"text": "Прочитаю дневник с начала", "soft": False},
+                        {"text": "Закрою и уйду", "soft": True},
+                        {"text": "Осмотрю лабораторию — поищу, что он нашёл", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Дневник рассыпается в руках, и на пол падает ключ — странной формы, будто из другого мира.",
+                        "soft": "Вы не читаете. В тишине слышен только шорох бумаги за спиной, хотя ветра здесь нет.",
+                        "mixed": "Страницы перелистываются сами, и вы чувствуете, что кто-то ещё здесь. Кто-то, кого вы не видите.",
+                    }
+                },
+                {
+                    "text": "🌀 В центре лаборатории стоит портал. Он мерцает. На стене висит записка: «Портал откроется тому, кто верит в него».",
+                    "options": [
+                        {"text": "Войду без раздумий", "soft": False},
+                        {"text": "Изучу устройство портала", "soft": True},
+                        {"text": "Спрошу напарника, что он думает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Портал вспыхивает, и вы делаете шаг. Земля уходит из-под ног.",
+                        "soft": "Гул стихает, портал гаснет, и ничего не происходит. Пока. Вы чувствуете, что он просто ждёт.",
+                        "mixed": "Из портала доносится голос. Он зовёт вас. Тихо, но настойчиво.",
+                    }
+                },
+                {
+                    "text": "🌫️ Из портала звучит странный голос. Он говорит на языке, которого вы не знаете, но почему-то понимаете каждое слово.",
+                    "options": [
+                        {"text": "Прислушаюсь", "soft": True},
+                        {"text": "Отвернусь — это ловушка", "soft": False},
+                        {"text": "Отвечу", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Голос замолкает, и портал открывается. Без вспышки, без звука. Просто открывается.",
+                        "soft": "Голос смеётся, и в его смехе слышится что-то человеческое. «Ты не готов», — говорит он.",
+                        "mixed": "Голос говорит одно слово: «Войди». И замолкает. Навсегда.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🌌 Странное звёздное небо",
+            "intro": "Вы выходите наружу, и первое, что замечаете — небо. Оно не такое, как должно быть. Звёзды двигаются, складываются в узоры, перестраиваются, будто пишут что-то. И вы стоите на земле, глядя вверх, не в силах отвести взгляд.",
+            "questions": [
+                {
+                    "text": "🌌 Над вами — странное звёздное небо. Звёзды двигаются, складываются в узоры, и вы понимаете: такого не бывает.",
+                    "options": [
+                        {"text": "Любуюсь — такого я ещё не видел", "soft": True},
+                        {"text": "Изучаю — здесь есть закономерность", "soft": False},
+                        {"text": "Пытаюсь найти что-то знакомое в незнакомом небе", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Звёзды выстраиваются в линию, и она указывает путь. Вам. Именно вам.",
+                        "soft": "Небо не двигается. Вы просто стоите, и время останавливается вместе с вами.",
+                        "mixed": "Одна звезда падает, и она падает прямо на вас. Но вы успеваете отойти.",
+                    }
+                },
+                {
+                    "text": "🗿 Под небом стоят две статуи. Одна — с вашим лицом, другая — с лицом напарника. Под ними надпись: «Одна должна уцелеть, другая пасть».",
+                    "options": [
+                        {"text": "Сломаю свою", "soft": True},
+                        {"text": "Сломаю статую напарника", "soft": False},
+                        {"text": "Пройду мимо", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Статуи рушатся одновременно, и осколки разлетаются по траве. Вы не смотрите друг на друга.",
+                        "soft": "Статуи остаются, и надпись исчезает сама. Будто её и не было.",
+                        "mixed": "Одна статуя улыбается, другая плачет. И вы не знаете, какая из них — чья.",
+                    }
+                },
+                {
+                    "text": "💔 Третья статуя — без лица. Она говорит: «Оставь здесь одного. И уйдёшь свободным».",
+                    "options": [
+                        {"text": "Оставлю себя", "soft": True},
+                        {"text": "Оставлю напарника", "soft": False},
+                        {"text": "Уйду вместе с напарником", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Статуя рассыпается, и наступает тишина. Такая, что слышно, как бьётся сердце.",
+                        "soft": "Статуя замолкает, и ничего не происходит. Ничего вообще.",
+                        "mixed": "Статуя говорит одно слово: «Поздно». И вы понимаете, что она права.",
+                    }
+                },
+                {
+                    "text": "🪞 Вы находите зеркало. Оно показывает вас — но не такими, какие вы есть, а такими, какими вы себя видите.",
+                    "options": [
+                        {"text": "Посмотрю внимательно", "soft": False},
+                        {"text": "Отвернусь", "soft": True},
+                        {"text": "Разобью зеркало", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Зеркало трескается, и осколки падают на землю. Медленно, будто нехотя.",
+                        "soft": "Вы не смотрите, и зеркало гаснет само, без вашего участия.",
+                        "mixed": "Отражение улыбается. Оно знает что-то, чего не знаете вы. И не скажет.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "👑 Зиккурат",
+            "intro": "Небо возвращается в нормальное состояние, и перед вами возникает зиккурат — древний, огромный, ступенчатый, уходящий в облака. На вершине — пустой трон. Голос сверху говорит: «Займи моё место. Ты достоин».",
+            "questions": [
+                {
+                    "text": "👑 Перед вами зиккурат, а на его вершине — пустой трон. Голос сверху говорит: «Займи моё место. Ты достоин».",
+                    "options": [
+                        {"text": "Поднимусь на трон", "soft": False},
+                        {"text": "Откажусь", "soft": True},
+                        {"text": "Обойду зиккурат — поищу другой вход", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Трон исчезает, и зиккурат начинает рушиться. Медленно, ступень за ступенью.",
+                        "soft": "Голос молчит, и наступает тишина. Вы стоите у подножия. И ждёте.",
+                        "mixed": "Трон ждёт. Он не отпустит вас. И вы это чувствуете.",
+                    }
+                },
+                {
+                    "text": "🎭 Внутри зиккурата — зал зеркал. В каждом — ваше отражение, но каждое выглядит иначе. Одно улыбается, другое хмурится, третье плачет.",
+                    "options": [
+                        {"text": "Зайду внутрь", "soft": False},
+                        {"text": "Пройду мимо", "soft": True},
+                        {"text": "Окликну отражения — вдруг ответят", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Зеркала гаснут, и вы оказываетесь на другой стороне. Не помня, как там очутились.",
+                        "soft": "Зеркала поют. Песня знакомая, но вы не можете вспомнить, откуда её знаете.",
+                        "mixed": "Одно зеркало трескается, и из него выходит рука. Она тянется к вам.",
+                    }
+                },
+                {
+                    "text": "💀 Из темноты звучит голос: «Ты — ложный идол. Ты не тот, кем себя считаешь. Уходи, пока можешь».",
+                    "options": [
+                        {"text": "Соглашусь — и уйду", "soft": True},
+                        {"text": "Спорю — и останусь", "soft": False},
+                        {"text": "Засмеюсь — это пустые слова", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Голос замолкает, и тьма расступается. Стены зиккурата начинают дрожать. Медленно, как при землетрясении.",
+                        "soft": "Голос смеётся и спрашивает: «Ты уверен в этом?» Камень под ногами трескается. Трещины растут.",
+                        "mixed": "Голос говорит: «Хорошо. Иди». Но идти уже некуда — выход заваливает камнями.",
+                    }
+                },
+                {
+                    "text": "💥 Зиккурат рушится. Камни падают со всех сторон, ступени осыпаются. В стене — трещина, через которую видно небо. У вас есть один момент, чтобы выбрать, как выбраться.",
+                    "options": [
+                        {"text": "Побегу к трещине — выберусь через неё", "soft": True},
+                        {"text": "Попробую найти другой выход — вглубь", "soft": False},
+                        {"text": "Схвачу напарника и прыгну в трещину вместе", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вы бежите к трещине, и стена рушится за спиной. Вы выбираетесь наружу. Зиккурат обращается в пыль. Только камни и тишина.",
+                        "soft": "Вы бежите вглубь, но там — тупик. Стены смыкаются. Вы успеваете найти боковой проход — узкий, но спасительный. И выбираетесь. Зиккурат остаётся позади, наполовину разрушенный.",
+                        "mixed": "Вы хватаете напарника и прыгаете. Оба вылетаете через трещину, падаете на камни. Зиккурат рушится целиком. От него остаётся только воронка.",
+                    }
+                },
+            ]
+        },
+    ],
+    "flag_question": 1,
+    "flag_options": ["Войду без раздумий", "Изучу устройство портала", "Спрошу напарника, что он думает"],
+    "flag_effects": {
+        "0": {"target_question": 7, "add_text": "Зиккурат знает: ты бросился в неизвестное. Это смелость. Или глупость."},
+        "1": {"target_question": 7, "add_text": "Зиккурат знает: ты изучал, а не прыгал. Это мудрость. Или страх."},
+        "2": {"target_question": 7, "add_text": "Зиккурат знает: ты не решил сам. Но не один. Это тоже важно."},
+    }
 }
+
+
+# ========== ТЕМА 10: ПОДВОДНАЯ СОКРОВИЩНИЦА ГЕРОЕВ ==========
+DUNGEONS["underwater"] = {
+    "name": "🌊 Подводная сокровищница героев",
+    "phases": [
+        {
+            "name": "🕳️ Пещера тысячи глубин",
+            "intro": "Пещера встречает вас холодом и запахом соли. Внизу — вода. Она чёрная, но светится изнутри. На стене вырезана надпись: «Тот, кто войдёт — не выйдет прежним».",
+            "questions": [
+                {
+                    "text": "🕳️ Пещера уходит вниз, к воде. Она чёрная, но светится. На стене вырезана надпись: «Тот, кто войдёт — не выйдет прежним».",
+                    "options": [
+                        {"text": "Войду без раздумий", "soft": False},
+                        {"text": "Осмотрю пещеру — поищу другой вход", "soft": True},
+                        {"text": "Спрошу напарника, что он думает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вода расступается сама, и вы идёте вниз. По дну, которого нет.",
+                        "soft": "Надпись стирается, и вода успокаивается. Ждёт.",
+                        "mixed": "Из воды выходит фигура, но она молчит. Она просто смотрит на вас.",
+                    }
+                },
+                {
+                    "text": "🐚 На дне лежит ракушка. Она шепчет вашим голосом: «Верни меня домой».",
+                    "options": [
+                        {"text": "Возьму её", "soft": True},
+                        {"text": "Оставлю — это ловушка", "soft": False},
+                        {"text": "Спрошу, где её дом", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Ракушка замолкает, и вы идёте дальше. Тишина.",
+                        "soft": "Она плачет, и вода вокруг становится солёной. Солонее, чем была.",
+                        "mixed": "Она смеётся. «Ты уже дома», — говорит она. И вы не понимаете, что она имеет в виду.",
+                    }
+                },
+                {
+                    "text": "👤 Перед вами — утопленник. Он не мёртв. Он говорит: «Помоги мне вернуться».",
+                    "options": [
+                        {"text": "Помогу", "soft": True},
+                        {"text": "Откажусь — это опасно", "soft": False},
+                        {"text": "Спрошу, что он оставил наверху", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он исчезает, и вода становится чище. Намного чище.",
+                        "soft": "Он кивает. «Я подожду здесь». И садится обратно на дно.",
+                        "mixed": "Он говорит: «Ты тоже утонешь». И замолкает. А вы идёте дальше.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "💧 Водопад Желаний",
+            "intro": "Вы выходите к водопаду. Он течёт вверх — не вниз, а вверх, нарушая все законы мира. Над водопадом висит надпись: «Загадай одно. Но помни: желания сбываются».",
+            "questions": [
+                {
+                    "text": "💧 Водопад течёт вверх. Над ним висит надпись: «Загадай одно. Но помни: желания сбываются».",
+                    "options": [
+                        {"text": "Загадаю что-то для себя", "soft": False},
+                        {"text": "Загадаю что-то для напарника", "soft": True},
+                        {"text": "Не буду загадывать", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Водопад замирает, и желание принято. Вы чувствуете это.",
+                        "soft": "Вода звенит, будто слушает. И ждёт.",
+                        "mixed": "Водопад смеётся. «Все так говорят», — говорит он. И продолжает течь вверх.",
+                    }
+                },
+                {
+                    "text": "🐟 Стая рыб окружает вас. Они не нападают. Они поют. Песня знакомая, но вы не помните, откуда.",
+                    "options": [
+                        {"text": "Подпою", "soft": True},
+                        {"text": "Заткну уши", "soft": False},
+                        {"text": "Окликну их — вдруг ответят", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Рыбы исчезают, и песня остаётся в голове. Надолго.",
+                        "soft": "Вы поёте, и песня обрывается. На середине.",
+                        "mixed": "Одна рыба остаётся. Она смотрит на вас. Долго. Не уплывает.",
+                    }
+                },
+                {
+                    "text": "🔒 Вы находите сундук. Он заперт, ключа нет, рядом — только камни. На крышке выцарапано: «Откроется тому, кто не боится потерять».",
+                    "options": [
+                        {"text": "Сломаю камнем", "soft": False},
+                        {"text": "Попробую вскрыть отмычкой — а потом откроем вместе", "soft": True},
+                        {"text": "Оставлю — не хочу терять", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Сундук трескается, и внутри — пусто. Но вы чувствуете, что что-то изменилось. В вас.",
+                        "soft": "Замок поддаётся, и внутри — старая монета. Ничего ценного, но вы её берёте.",
+                        "mixed": "Сундук не открывается, и надпись меняется на другую: «Ты боишься».",
+                    }
+                },
+                {
+                    "text": "🌊 Течение подхватывает вас и уносит вглубь. Вода холодная. Ледяная.",
+                    "options": [
+                        {"text": "Поплыву к берегу — вытащу напарника", "soft": True},
+                        {"text": "Поплыву сам", "soft": False},
+                        {"text": "Нырну вглубь — посмотрю, что там", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Течение стихает, и берег оказывается близко. Ближе, чем вы думали.",
+                        "soft": "Вы на берегу. Оба. Мокрые, но живые.",
+                        "mixed": "Течение сильнее, и кто-то остаётся в воде. Вы не знаете кто.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "👑 Сокровищница героев",
+            "intro": "Вы входите в зал. На стенах висят портреты героев — суровых, усталых, но с огнём в глазах. В центре зала — их сокровища. Голос говорит: «Возьми одно. Но помни: каждое — чья-то жизнь».",
+            "questions": [
+                {
+                    "text": "👑 На стенах — портреты героев. В центре — сокровища. Голос говорит: «Возьми одно. Но помни: каждое — чья-то жизнь».",
+                    "options": [
+                        {"text": "Возьму", "soft": False},
+                        {"text": "Не возьму ничего", "soft": True},
+                        {"text": "Рассмотрю портреты — кто они?", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Сокровища тускнеют, и свет в зале гаснет. Медленно, как в театре.",
+                        "soft": "Портреты кивают. «Достойно», — говорит один из них. Голосом, которого нет.",
+                        "mixed": "Одно сокровище светится ярче остальных. Оно ждёт, что вы возьмёте именно его.",
+                    }
+                },
+                {
+                    "text": "🗡️ Меч героя говорит: «Возьми меня. Я помню всех, кто меня держал».",
+                    "options": [
+                        {"text": "Возьму", "soft": False},
+                        {"text": "Откажусь", "soft": True},
+                        {"text": "Спрошу, кого он помнит", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Меч замолкает, будто не привык к отказам. Или к согласию.",
+                        "soft": "Меч падает, и звон идёт по залу. Долго. Очень долго.",
+                        "mixed": "Меч говорит: «Ты будешь последним». И замолкает. А вы стоите.",
+                    }
+                },
+                {
+                    "text": "💎 Алмаз говорит: «Я — память. Возьми меня — и не забудешь ничего».",
+                    "options": [
+                        {"text": "Возьму", "soft": False},
+                        {"text": "Откажусь — я хочу забыть", "soft": True},
+                        {"text": "Спрошу, что я забыл", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Алмаз гаснет, и он не понимает. Память — это дар. Разве нет?",
+                        "soft": "Алмаз рассыпается, и память остаётся с вами. Вся. До последней секунды.",
+                        "mixed": "Алмаз показывает вам прошлое. Всё сразу. И вы закрываете глаза.",
+                    }
+                },
+                {
+                    "text": "🌅 Вы выходите из пещеры. На руках — пыль. Напарник поворачивается и спрашивает: «Что ты взял?»",
+                    "options": [
+                        {"text": "Расскажу правду", "soft": True},
+                        {"text": "Совру", "soft": False},
+                        {"text": "Скажу: «Ничего»", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он кивает и говорит: «Я тоже». И вы идёте дальше. Молча.",
+                        "soft": "Он молчит, потом говорит: «Спасибо». И это — правда.",
+                        "mixed": "Он говорит: «Врёшь». И улыбается. Впервые за всё время.",
+                    }
+                },
+            ]
+        },
+    ],
+    "flag_question": 2,
+    "flag_options": ["Помогу", "Откажусь — это опасно", "Спрошу, что он оставил наверху"],
+    "flag_effects": {
+        "0": {"target_question": 10, "add_text": "Призрак говорит: «Ты помог ему. Он обрёл покой. Спасибо»."},
+        "1": {"target_question": 10, "add_text": "Призрак говорит: «Ты прошёл мимо. Я не осуждаю. Но он ждал»."},
+        "2": {"target_question": 10, "add_text": "Призрак говорит: «Ты хотел знать, что он оставил. Это честно. Хотя и не милосердно»."},
+    }
+}
+
+
+# ========== ТЕМА 11: СКАЛИСТОЕ ПОБЕРЕЖЬЕ ==========
+DUNGEONS["coast"] = {
+    "name": "🏝️ Скалистое побережье",
+    "phases": [
+        {
+            "name": "🗼 Маяк Одиночества",
+            "intro": "Вы выходите к маяку. Он стоит на скале, высокий и старый, и свет его разрезает темноту — настойчиво, будто зовёт. Ступени вырублены прямо в камне. А у подножия кто-то оставил конверт.",
+            "questions": [
+                {
+                    "text": "🗼 Вы поднимаете конверт. Внутри — записка: «Я ушёл. Свет оставил для тебя. Поднимайся, если не боишься».",
+                    "options": [
+                        {"text": "Поднимусь по ступеням", "soft": False},
+                        {"text": "Останусь у подножия — осмотрюсь сначала", "soft": True},
+                        {"text": "Позову напарника — поднимемся вместе", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Ступени крутые, но крепкие. Свет сверху становится ярче — будто вас ждут.",
+                        "soft": "Вы осматриваетесь, и находите ещё одну записку. Слова на ней стёрлись. Осталось только «…бойся».",
+                        "mixed": "Вы слышите шаги наверху. Кто-то ходит. Но дверь заперта изнутри.",
+                    }
+                },
+                {
+                    "text": "🔥 На вершине маяка сидит старый смотритель. Он слеп. Он говорит: «Свет — это ложь. Лучше примкнуть ко тьме».",
+                    "options": [
+                        {"text": "Соглашусь с ним", "soft": True},
+                        {"text": "Возражу — свет важен", "soft": False},
+                        {"text": "Спрошу, что он видел во тьме", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Он кивает. «Наконец-то кто-то понял». И закрывает глаза.",
+                        "soft": "Он молчит и смотрит в окно. Хотя слеп. Хотя не может видеть.",
+                        "mixed": "Он говорит: «Ты узнаешь. Скоро». И замолкает. Навсегда.",
+                    }
+                },
+                {
+                    "text": "👁️ У берега — какое-то движение. Что-то шевелится между камней. Медленно. Настойчиво.",
+                    "options": [
+                        {"text": "Подойду — посмотрю", "soft": False},
+                        {"text": "Понаблюдаю издалека", "soft": True},
+                        {"text": "Крикну — кто там?", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Движение стихает, и остаются только волны. Спокойные. Обманчиво спокойные.",
+                        "soft": "Из-за камня выходит тюлень. Он смотрит на вас. Долго. И уходит в воду.",
+                        "mixed": "Тень скользит вдоль берега и исчезает. Вы не успеваете её разглядеть.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🌅 Берег Солнечных лучей",
+            "intro": "Вы спускаетесь на берег, и начинается рассвет. Берег становится золотым, вода тёплой. Всё слишком красиво — так красиво, что становится не по себе.",
+            "questions": [
+                {
+                    "text": "🌅 Рассвет. Берег золотой, вода тёплая, воздух мягкий. Всё слишком красиво, чтобы быть правдой.",
+                    "options": [
+                        {"text": "Останусь здесь — тут спокойно", "soft": True},
+                        {"text": "Пойду дальше — что-то здесь не так", "soft": False},
+                        {"text": "Искупаюсь в тёплой воде", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Солнце поднимается, и вода становится прозрачной. Настолько, что видно дно.",
+                        "soft": "Время останавливается, и вы стоите. Просто стоите. И дышите.",
+                        "mixed": "Вода отступает, открывая тропу. Тропу, которой минуту назад не было.",
+                    }
+                },
+                {
+                    "text": "🐚 На берегу лежат ракушки. В одной из них — голос. Он зовёт по имени.",
+                    "options": [
+                        {"text": "Открою ракушку", "soft": False},
+                        {"text": "Отвернусь — это ложь", "soft": True},
+                        {"text": "Спрошу напарника, слышит ли он", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Ракушка замолкает, и голос исчезает. Навсегда.",
+                        "soft": "Ракушка рассыпается, и песок уносит её. Медленно, как время.",
+                        "mixed": "Голос говорит: «Ты уже слышал это раньше». И вы понимаете, что это правда.",
+                    }
+                },
+                {
+                    "text": "⚓ На берегу стоит старый корабль. Он цел, паруса на месте, но команды нет. И тишина вокруг него особая.",
+                    "options": [
+                        {"text": "Поднимусь на борт", "soft": False},
+                        {"text": "Останусь на берегу", "soft": True},
+                        {"text": "Обыщу берег рядом с кораблём", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Палуба пуста, но на столе лежит карта. Свежая, будто её только что нарисовали.",
+                        "soft": "Корабль скрипит, и вы понимаете — он ждёт. Именно вас.",
+                        "mixed": "Из трюма доносится пение. Тихий голос. Он поёт колыбельную.",
+                    }
+                },
+                {
+                    "text": "⛈️ Слышен гром, тучи сгущаются, надвигается буря. Она идёт быстро, слишком быстро.",
+                    "options": [
+                        {"text": "Спрячусь в укрытие — пережду", "soft": True},
+                        {"text": "Останусь на берегу — интересно посмотреть", "soft": False},
+                        {"text": "Побегу вдоль берега — поищу укрытие подальше", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Молния бьёт в скалы, и свет ослепляет. На секунду вы ничего не видите.",
+                        "soft": "Дождь стучит по камням, и волны поднимаются всё выше. И выше.",
+                        "mixed": "Ветер рвёт паруса, и буря оказывается сильнее, чем вы думали.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "⚔️ Корабль Орочьих налётчиков",
+            "intro": "К берегу причаливает корабль. Это судно орков — грубое, крепкое, пахнущее дымом и потом. Орки спускаются на берег и начинают окружать вас.",
+            "questions": [
+                {
+                    "text": "⚔️ К берегу причаливает корабль орков, и они начинают окружать вас. Молча. С оружием наготове.",
+                    "options": [
+                        {"text": "Обнажу оружие", "soft": False},
+                        {"text": "Останусь на месте — пусть подойдут", "soft": True},
+                        {"text": "Попробую заговорить", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Орки останавливаются, и их вождь выходит вперёд. Он смотрит на вас. Долго.",
+                        "soft": "Орки окружают, но не нападают. Пока не нападают.",
+                        "mixed": "Вождь смеётся. «Смельчаки», — говорит он. И это звучит почти как уважение.",
+                    }
+                },
+                {
+                    "text": "🤝 Орки не тронут вас, если вы пропустите их дальше. Вождь ждёт ответа.",
+                    "options": [
+                        {"text": "Пропущу", "soft": True},
+                        {"text": "Откажусь", "soft": False},
+                        {"text": "Спрошу, куда они идут", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Орки идут мимо, не оглядываясь. Будто вас и нет.",
+                        "soft": "Вождь кивает. «Мудро», — говорит он. И уходит.",
+                        "mixed": "Орки замирают и ждут ответа. Долго. Слишком долго.",
+                    }
+                },
+                {
+                    "text": "🗡️ Сильнейший из орков хочет с вами сразиться в дуэли. Он стоит и ждёт, кто выйдет.",
+                    "options": [
+                        {"text": "Я", "soft": False},
+                        {"text": "Напарник", "soft": False},
+                        {"text": "Откажемся оба", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Орк кланяется, и дуэль начинается. Без злобы. По-честному.",
+                        "soft": "Орк смеётся. «Трусы. Но живые». И уходит.",
+                        "mixed": "Орк выбирает сам и указывает на одного из вас. Пальцем. Молча.",
+                    }
+                },
+                {
+                    "text": "💀 Орки вдруг убегают на свой корабль. А позади вас что-то приближается. С ужасно мощной аурой.",
+                    "options": [
+                        {"text": "Обернусь", "soft": False},
+                        {"text": "Побегу к маяку", "soft": False},
+                        {"text": "Замру на месте", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Тьма накрывает берег, но вы живы. Непонятно как, но живы.",
+                        "soft": "Аура стихает, и ничего не происходит. Совсем ничего.",
+                        "mixed": "Позади — тишина. Слишком тихая, чтобы быть настоящей.",
+                    }
+                },
+            ]
+        },
+    ],
+    "flag_question": 1,
+    "flag_options": ["Соглашусь с ним", "Возражу — свет важен", "Спрошу, что он видел во тьме"],
+    "flag_effects": {
+        "0": {"target_question": 10, "add_text": "Грозная сила шепчет: «Ты принял тьму ещё тогда. И сейчас принимаешь. Ты готов»."},
+        "1": {"target_question": 10, "add_text": "Грозная сила шепчет: «Ты спорил. Значит, есть за что бороться. Живи»."},
+        "2": {"target_question": 10, "add_text": "Грозная сила шепчет: «Ты хотел знать. Теперь знаешь. Уходи»."},
+    }
+}
+
+
+# ========== ТЕМА 12: ПАРОВОЕ ПОДЗЕМЕЛЬЕ ==========
+DUNGEONS["steam"] = {
+    "name": "🚂 Паровое подземелье",
+    "phases": [
+        {
+            "name": "🚂 Паровые тоннели",
+            "intro": "Вход в подземелье — старая чугунная дверь. Она приоткрыта, и из щели валит пар, тёплый и влажный. Изнутри доносится ритмичное гудение, будто там работает огромное сердце. Люди отсюда не возвращаются.",
+            "questions": [
+                {
+                    "text": "🔧 Вы спускаетесь в тоннель. Механизмы вокруг гудят, трубы шипят, и из темноты доносится странный звук — будто кто-то дышит.",
+                    "options": [
+                        {"text": "Пойду на звук", "soft": False},
+                        {"text": "Осмотрю механизмы — что это?", "soft": True},
+                        {"text": "Останусь у входа — подожду", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Тоннель уходит вглубь. Чем дальше, тем громче гудение. И тем сильнее запах пара.",
+                        "soft": "Механизмы выглядят старыми, но работают. Кто-то их обслуживает. И этот кто-то — рядом.",
+                        "mixed": "Вы стоите у входа, и пар начинает сгущаться вокруг вас. Медленно, как туман.",
+                    }
+                },
+                {
+                    "text": "🚪 Вы находите комнату, полную устройств. Из одной трубки валит пар. Рядом — брошенные вещи и записи предыдущей группы. Последняя строка: «Я больше не вернусь. Здесь слишком хорошо».",
+                    "options": [
+                        {"text": "Прочитаю дневник с начала", "soft": False},
+                        {"text": "Осмотрю устройства — что они делают?", "soft": True},
+                        {"text": "Закрою дверь и пойду дальше", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Дневник обрывается. Дальше — пустые страницы. Много пустых страниц.",
+                        "soft": "Устройства шипят, и в голове начинают появляться образы. Приятные. Слишком приятные.",
+                        "mixed": "Вы закрываете дверь, но пар уже пробрался в лёгкие. На секунду вы видите дом. Которого нет.",
+                    }
+                },
+                {
+                    "text": "👤 Из глубины тоннеля доносится голос. Он зовёт вас по имени. Тихий. Знакомый.",
+                    "options": [
+                        {"text": "Пойду на голос", "soft": False},
+                        {"text": "Остановлюсь — это может быть ловушка", "soft": True},
+                        {"text": "Позову напарника — пойдём вместе", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Голос замолкает, и вы идёте дальше. Один. В тишине.",
+                        "soft": "Вы стоите, и голос повторяется. Настойчивее. Но вы не двигаетесь.",
+                        "mixed": "Вы зовёте напарника, и голос стихает. Будто испугался.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🚇 Загадочное метро",
+            "intro": "Тоннель заканчивается, и вы выходите на платформу. Настоящее метро — но заброшенное. Рельсы блестят, будто по ним недавно ходили поезда. На стенах — старые плакаты, на которых изображены счастливые люди. И все они улыбаются одинаково.",
+            "questions": [
+                {
+                    "text": "🚂 На путях стоит поезд. Он не двигается, но из труб валит пар. Двери открыты. Внутри — темно.",
+                    "options": [
+                        {"text": "Войду в вагон", "soft": False},
+                        {"text": "Осмотрю поезд снаружи", "soft": True},
+                        {"text": "Пойду по платформе дальше", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вагон пахнет домом. Не вашим, но приятным. Тёплым. И вы садитесь, не помня как.",
+                        "soft": "Поезд выглядит целым, но нигде нет ни номера, ни названия станции. Ничего, что указывало бы на маршрут.",
+                        "mixed": "Вы идёте по платформе, и поезд трогается. Медленно. За вашей спиной.",
+                    }
+                },
+                {
+                    "text": "🎵 Из вагона доносится музыка. Тихая, знакомая. Кто-то поёт колыбельную, и вы понимаете, что знаете эту песню.",
+                    "options": [
+                        {"text": "Войду — посмотрю, кто поёт", "soft": False},
+                        {"text": "Отвернусь — не хочу знать", "soft": True},
+                        {"text": "Прислушаюсь — может, вспомню", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Вы входите, и музыка стихает. В вагоне пусто. Но кто-то только что пел.",
+                        "soft": "Вы отворачиваетесь, и песня обрывается. На середине. Будто певец обиделся.",
+                        "mixed": "Вы слушаете, и в памяти всплывает что-то. Детство. Которого не было.",
+                    }
+                },
+                {
+                    "text": "🪞 На платформе — зеркало. В нём вы видите себя, но не такого, какой вы есть. А такого, каким мечтали стать. И отражение улыбается.",
+                    "options": [
+                        {"text": "Посмотрю внимательно", "soft": False},
+                        {"text": "Отвернусь — это обман", "soft": True},
+                        {"text": "Разобью зеркало", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Отражение поднимает руку. Вы тоже. Но с задержкой. Или это ваша рука двигается не сразу?",
+                        "soft": "Вы отворачиваетесь, и зеркало гаснет. Но образ остаётся в голове. Надолго.",
+                        "mixed": "Зеркало трескается, и в трещинах вы видите другой мир. Идеальный. И он манит.",
+                    }
+                },
+                {
+                    "text": "🚇 Поезд начинает двигаться. Медленно уходит в тоннель. Если не прыгнуть сейчас — не узнаете, что там. Но обратно вернуться будет нельзя.",
+                    "options": [
+                        {"text": "Прыгну в последний вагон", "soft": False},
+                        {"text": "Останусь на платформе", "soft": True},
+                        {"text": "Спрошу напарника — что он думает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вагон качается, и вы едете. Куда — неизвестно. Но почему-то не страшно.",
+                        "soft": "Поезд уходит без вас. Платформа пуста. И это правильно. Вы это чувствуете.",
+                        "mixed": "Вы спрашиваете, и поезд останавливается. Будто ждёт вашего решения.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🎈 Парящие платформы",
+            "intro": "Тоннель открывается в огромный зал. Пол здесь — не пол, а парящие платформы, висящие в воздухе. В центре — пульт, окружённый устройствами, из которых валит густой пар. За пультом стоит фигура в плаще. Она не оборачивается. Но вы знаете: она ждала вас. Это — Творец.",
+            "questions": [
+                {
+                    "text": "🎭 Творец стоит спиной. Он говорит: «Я знал, что вы придёте. Все приходят. Хотите увидеть свой идеальный мир?»",
+                    "options": [
+                        {"text": "Соглашусь — хочу", "soft": False},
+                        {"text": "Откажусь — это ложь", "soft": True},
+                        {"text": "Спрошу, что он имеет в виду", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Он оборачивается. Его лицо скрыто под капюшоном, но вы чувствуете — он улыбается.",
+                        "soft": "Он смеётся, и смех эхом отражается от стен. «Все так говорят», — говорит он.",
+                        "mixed": "Он поднимает руку, и пар начинает клубиться вокруг вас. Гуще. Теплее.",
+                    }
+                },
+                {
+                    "text": "🌀 Творец показывает вам видение. В нём — вы, счастливые, в мире, где всё идеально. Нет боли, нет страха, нет потерь. Он говорит: «Останьтесь здесь. Навсегда».",
+                    "options": [
+                        {"text": "Останусь — здесь хорошо", "soft": False},
+                        {"text": "Откажусь — это не настоящее", "soft": True},
+                        {"text": "Присмотрюсь — нет ли подвоха в деталях", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Видение меркнет. Творец стоит перед вами. Его руки сжаты в кулаки.",
+                        "soft": "Он не ожидал отказа. Пар вокруг начинает дрожать. Устройства гудят громче.",
+                        "mixed": "Вы всматриваетесь, и находите трещину в идеальном мире. Она растёт. Творец замечает.",
+                    }
+                },
+                {
+                    "text": "⚔️ Творец говорит: «Вы не уйдёте. Либо остаётесь в иллюзии, либо остаётесь здесь навсегда — в стенах подземелья. Выбирайте».",
+                    "options": [
+                        {"text": "Соглашусь остаться в иллюзии", "soft": False},
+                        {"text": "Откажусь и буду искать выход", "soft": True},
+                        {"text": "Промолчу — пусть решает напарник", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он кивает. «Слово сказано». Устройства начинают светиться. Ярче и ярче.",
+                        "soft": "Он смеётся. «Хорошо. Тогда я вас похороню здесь». Пар становится удушливым.",
+                        "mixed": "Вы молчите, и Творец отступает на шаг. Он не ожидал, что вы будете решать вместе.",
+                    }
+                },
+                {
+                    "text": "💥 Устройства гудят всё громче, пар заполняет зал. Творец поднимает руку — сейчас он нанесёт удар. У вас есть один момент, чтобы победить. Как поступите?",
+                    "options": [
+                        {"text": "Сосредоточусь — мысленно противостою иллюзии", "soft": True},
+                        {"text": "Брошусь к пульту и сломаю его", "soft": False},
+                        {"text": "Разверну трубы — направлю пар обратно на Творца", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Вы закрываете глаза и сосредотачиваетесь. Иллюзия трещит по швам, и устройства, не выдержав, начинают взрываться одно за другим. Творец кричит — но его голос тонет в грохоте. Подземелье рушится. Вы бежите к выходу. Выбираетесь — вдвоём.",
+                        "soft": "Вы бросаетесь к пульту и бьёте по нему. Искры, дым, грохот. Творец падает. Устройства глохнут, но начинают рушиться. Вы хватаете напарника и бежите. Успеваете.",
+                        "mixed": "Вы разворачиваете трубы, и пар идёт в лицо Творцу. Он захлёбывается своими же иллюзиями. Устройства взрываются, и подземелье рушится. Вы бежите. За спиной — огонь и пар.",
+                    }
+                },
+            ]
+        },
+    ],
+    "flag_question": 4,
+    "flag_options": ["Войду — посмотрю, кто поёт", "Отвернусь — не хочу знать", "Прислушаюсь — может, вспомню"],
+    "flag_effects": {
+        "0": {"target_question": 7, "add_text": "Творец говорит: «Ты вошёл в мою музыку. Она теперь в тебе. Навсегда»."},
+        "1": {"target_question": 7, "add_text": "Творец говорит: «Ты отказался от песни. Значит, ты сильнее, чем я думал»."},
+        "2": {"target_question": 7, "add_text": "Творец говорит: «Ты слушал. Но не вошёл. Ты боишься мечты»."},
+    }
+}
+
+
+# ========== ТЕМА 13: ЗАГАДОЧНЫЙ ГОРОД ==========
+DUNGEONS["city"] = {
+    "name": "🏙️ Загадочный город",
+    "phases": [
+        {
+            "name": "🔮 Телепорт в летающий город",
+            "intro": "На площади вашего города стоит странная арка. Она появилась сегодня утром. Внутри — мерцание, будто окно в другое место. Люди обходят её стороной. Но вы чувствуете: она зовёт именно вас.",
+            "questions": [
+                {
+                    "text": "🌀 Вы входите в арку — и оказываетесь на площади. Незнакомой. Внизу — облака. Вы стоите в небе.",
+                    "options": [
+                        {"text": "Осмотрюсь — надо понять, где я", "soft": True},
+                        {"text": "Сразу пойду вперёд — разберусь по ходу", "soft": False},
+                        {"text": "Вернусь к арке — проверю, работает ли она", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Арка закрывается за спиной. Обратной дороги нет. Пока нет. Вы это чувствуете.",
+                        "soft": "Площадь пуста. Но кто-то наблюдает. Вы не видите, кто. Но чувствуете взгляд.",
+                        "mixed": "Арка гаснет. Вы остаётесь на площади. Один. В незнакомом городе.",
+                    }
+                },
+                {
+                    "text": "🏛️ Дома вокруг высокие, из белого камня. Ни окон, ни дверей. Только стены. И тишина.",
+                    "options": [
+                        {"text": "Постучу в стену — вдруг откроется", "soft": False},
+                        {"text": "Обойду город — поищу вход", "soft": True},
+                        {"text": "Останусь на месте — подожду, что будет", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Стена не отвечает. Тишина становится гуще. И вы идёте дальше.",
+                        "soft": "Вы находите переулок, ведущий вглубь. Он узкий, но проходимый.",
+                        "mixed": "Вы стоите, и время тянется. Наконец, вдалеке появляется свет. Он зовёт.",
+                    }
+                },
+                {
+                    "text": "👤 Из переулка выходит фигура. Высокая. В плаще. Она говорит: «Ты пришёл. Но ты ещё не готов».",
+                    "options": [
+                        {"text": "Спрошу, что она имеет в виду", "soft": False},
+                        {"text": "Пойду дальше — не буду слушать", "soft": False},
+                        {"text": "Позову напарника — решим вместе", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Фигура исчезает. Слова остаются. «Ещё не готов». Вы не знаете, к чему.",
+                        "soft": "Она смеётся и уходит. Вы идёте вперёд, не оглядываясь.",
+                        "mixed": "Вы зовёте напарника, и фигура отступает. Она не ожидала, что вас двое.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🚪 Врата загадок",
+            "intro": "Улицы города ведут к огромным вратам. Они закрыты. На них вырезаны символы, которые вы не понимаете. Но они светятся. Медленно. Ритмично. Как сердце. Врата ждут ответа.",
+            "questions": [
+                {
+                    "text": "🚪 Врата закрыты. Перед ними — чаша с водой. На чаше надпись: «Опусти руку — и увидишь, кто ты на самом деле».",
+                    "options": [
+                        {"text": "Опущу руку", "soft": False},
+                        {"text": "Откажусь — не хочу знать", "soft": True},
+                        {"text": "Загляну в воду — вдруг что-то видно", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вода чернеет. В ней — ваше отражение. Но оно не двигается вместе с вами.",
+                        "soft": "Вы отворачиваетесь, и вода испаряется. Врата открываются сами. Без вашего участия.",
+                        "mixed": "В воде появляется образ. Кто-то знакомый. Но вы не помните, кто.",
+                    }
+                },
+                {
+                    "text": "🏛️ За вратами — длинный коридор. На стенах — фрески. На них изображены люди. Они входят в город. И больше не выходят.",
+                    "options": [
+                        {"text": "Рассмотрю фрески внимательно", "soft": True},
+                        {"text": "Пройду мимо — это просто картины", "soft": False},
+                        {"text": "Поищу на фресках себя", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "На последней фреске — пустое место. Будто там должны быть вы. Но художник не успел.",
+                        "soft": "Вы проходите мимо, и фрески гаснут. Одна за другой. Как свечи.",
+                        "mixed": "Вы находите себя. Но не того, каким вы себя помните. Другого. И это пугает.",
+                    }
+                },
+                {
+                    "text": "🪞 В конце коридора — зеркало. Оно показывает не вас. Оно показывает город. Каким он был раньше. До того, как взлетел.",
+                    "options": [
+                        {"text": "Посмотрю — интересно", "soft": False},
+                        {"text": "Отвернусь — прошлое не важно", "soft": True},
+                        {"text": "Разобью зеркало", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Город на зеркале горит. Люди бегут. А потом — тишина. И он взлетает. Один.",
+                        "soft": "Вы отворачиваетесь, и зеркало тускнеет. Но образ остаётся. В памяти.",
+                        "mixed": "Зеркало трескается, и вы видите своё лицо. Оно старше. И печальнее.",
+                    }
+                },
+                {
+                    "text": "🔔 В коридоре — колокол. Он висит на цепи. Под ним надпись: «Ударишь — узнаешь правду. Не ударишь — останешься в покое».",
+                    "options": [
+                        {"text": "Ударю в колокол", "soft": False},
+                        {"text": "Пройду мимо — покой важнее", "soft": True},
+                        {"text": "Спрошу напарника — что он думает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Колокол звенит. Долго. Очень долго. И вы слышите — в звоне есть слова.",
+                        "soft": "Вы проходите мимо, и колокол замолкает сам. Будто обиделся.",
+                        "mixed": "Вы спрашиваете, и колокол звенит дважды. Один раз — для вас. Один — для него.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🎡 Площадь чудес",
+            "intro": "Вы выходите на огромную площадь. В центре — фонтан. Но вместо воды — свет. Он струится вверх, к небу. Вокруг — люди. Много. Они улыбаются. И смотрят на вас. Все одновременно.",
+            "questions": [
+                {
+                    "text": "🎡 Площадь полна людей. Они улыбаются. Все. Одинаково. И смотрят на вас. Молча.",
+                    "options": [
+                        {"text": "Подойду к ним", "soft": False},
+                        {"text": "Останусь в стороне — понаблюдаю", "soft": True},
+                        {"text": "Спрошу, кто они", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Они расступаются, пропуская вас к фонтану. Свет становится ярче.",
+                        "soft": "Вы стоите, и они возвращаются к своим делам. Будто вас и не было.",
+                        "mixed": "Вы спрашиваете, и один из них поворачивается. «Мы — те, кто остался». И замолкает.",
+                    }
+                },
+                {
+                    "text": "🌟 Из фонтана выходит фигура. Сияющая. Она говорит: «Ты можешь остаться здесь. Навсегда. Здесь нет боли. Нет страха. Нет потерь».",
+                    "options": [
+                        {"text": "Останусь — здесь хорошо", "soft": False},
+                        {"text": "Откажусь — я хочу вернуться", "soft": True},
+                        {"text": "Спрошу, что будет, если откажусь", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Фигура кивает. «Как хочешь». Свет тускнеет. Площадь становится обычной.",
+                        "soft": "Фигура не ожидала отказа. Она отступает. И свет гаснет.",
+                        "mixed": "Она смеётся. «Тогда ты останешься здесь силой». И поднимает руку.",
+                    }
+                },
+                {
+                    "text": "🌀 Фигура из фонтана говорит: «Я дам вам выбор. Либо вы забываете этот город навсегда. Либо помните — но не можете рассказать никому».",
+                    "options": [
+                        {"text": "Забуду — так проще", "soft": True},
+                        {"text": "Буду помнить — даже в одиночестве", "soft": False},
+                        {"text": "Промолчу — пусть решает напарник", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Она кивает. «Слово сказано». Свет тускнеет. Вы уходите. И не помните, куда.",
+                        "soft": "Она смеётся. «Хорошо. Тогда несите эту ношу». И исчезает.",
+                        "mixed": "Вы молчите, и фигура отступает. Она не ожидала, что вы решите вместе.",
+                    }
+                },
+                {
+                    "text": "💥 Город рушится. Фигура кричит: «Вы не уйдёте!» Свет фонтана гаснет. И вы чувствуете, что проваливаетесь. Будто засыпаете.",
+                    "options": [
+                        {"text": "Закрою глаза — приму сон", "soft": True},
+                        {"text": "Буду бороться — не хочу спать", "soft": False},
+                        {"text": "Схвачу напарника — вместе проснёмся", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вы закрываете глаза, и город исчезает. Вы просыпаетесь на площади своего города. Арки нет. Будто и не было.",
+                        "soft": "Вы боретесь, и сон отступает. Вы просыпаетесь. Но помните всё. Каждую деталь. И это — тяжело.",
+                        "mixed": "Вы хватаете напарника, и вы просыпаетесь вдвоём. На той же площади. Арка исчезла. Но вы помните друг друга. И это реально.",
+                    }
+                },
+            ]
+        },
+    ],
+    "flag_question": 0,
+    "flag_options": ["Осмотрюсь — надо понять, где я", "Сразу пойду вперёд — разберусь по ходу", "Вернусь к арке — проверю, работает ли она"],
+    "flag_effects": {
+        "0": {"target_question": 7, "add_text": "Город знает: ты не бросился в неизвестное. Это мудрость. Или страх."},
+        "1": {"target_question": 7, "add_text": "Город знает: ты доверился неизвестному. Это смелость. Или глупость."},
+        "2": {"target_question": 7, "add_text": "Город знает: ты хотел уйти. Но арка закрыта. И это — твой выбор."},
+    }
+}
+
+
+# ========== ТЕМА 14: ВУЛКАН ВОЛНЕНИЙ ==========
+DUNGEONS["volcano"] = {
+    "name": "🌋 Вулкан волнений",
+    "phases": [
+        {
+            "name": "🥾 Тропа на вершину вулкана",
+            "intro": "Старый вулкан спал сотни лет. Но вчера из его вершины пошёл дым. Сегодня дым виден из города. Люди говорят разное — кто-то боится, кто-то смеётся. Но вы идёте. Лес у подножия густой, тропа едва видна, и с каждым шагом воздух становится теплее.",
+            "questions": [
+                {
+                    "text": "🌲 Лес непроходимый — лианы, бурелом, камни. Тропа обрывается, и вам приходится пробираться наугад. Где-то впереди — вершина.",
+                    "options": [
+                        {"text": "Пойду напролом — через бурелом", "soft": False},
+                        {"text": "Поищу обход — так безопаснее", "soft": True},
+                        {"text": "Заберусь на дерево — осмотрюсь сверху", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Вы пробираетесь через завалы, и лес становится тише. Слишком тише. Будто наблюдает.",
+                        "soft": "Обход находится, и вы идёте дальше по мягкой земле. Но кто-то идёт следом. Вы не видите, кто. Но слышите шаги.",
+                        "mixed": "С дерева видно дым над вершиной. И ещё одну группу. Они идут быстрее вас.",
+                    }
+                },
+                {
+                    "text": "⚔️ На поляне — другие приключенцы. Четверо. Они замечают вас и хмурятся. Один выходит вперёд: «Мы первые. Слава наша. Уходите».",
+                    "options": [
+                        {"text": "Отступлю — не хочу драки", "soft": True},
+                        {"text": "Отвечу прямо: «Мы идём вместе или не идёт никто»", "soft": False},
+                        {"text": "Обойду их молча — пусть идут своей дорогой", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Они смотрят на вас долго. Потом молча расходятся. Но один оборачивается. И смотрит вслед.",
+                        "soft": "Они смеются, но пропускают. Вслед летит: «Не отставайте. Там будет жарко». И они уходят вперёд.",
+                        "mixed": "Вы обходите их, и они не мешают. Но вы чувствуете: это не последняя встреча.",
+                    }
+                },
+                {
+                    "text": "🪨 Тропа снова сужается. Впереди — обрыв. Один неверный шаг — и вы полетите вниз. Соперники уже прошли здесь. Видны следы.",
+                    "options": [
+                        {"text": "Пойду первым — проверю", "soft": False},
+                        {"text": "Пойдём рядом, шаг в шаг", "soft": True},
+                        {"text": "Подожду — посмотрю, как пройдут другие", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вы проходите. Камень крошится под ногами, но держит. И вы идёте дальше.",
+                        "soft": "Вы идёте медленно, и это спасает. Там, где вы прошли, земля осыпается за спиной.",
+                        "mixed": "Вы ждёте, но никто не идёт. Только ветер. И вы идёте сами.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🔥 Раскалённые уступы",
+            "intro": "Вершина. Кратер. Из жерла идёт дым и тепло, как из открытой печи. Спуск крутой — уступы, трещины, обрывы. Где-то там, внизу, — то, что заставило вулкан проснуться. И вы спускаетесь.",
+            "questions": [
+                {
+                    "text": "🔥 Жерло широкое, как колодец. Уступы скользкие от пепла. Один неверный шаг — и вы упадёте в темноту. Далеко.",
+                    "options": [
+                        {"text": "Спущусь по уступам — медленно", "soft": True},
+                        {"text": "Спущусь по верёвке — быстрее", "soft": False},
+                        {"text": "Поищу другой спуск — вдруг есть", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Уступы держат. Пар становится гуще. И вы слышите — внизу что-то дышит.",
+                        "soft": "Верёвка натягивается, но держит. Вы спускаетесь быстро. Слишком быстро.",
+                        "mixed": "Другого спуска нет. Только этот. И вы возвращаетесь к нему.",
+                    }
+                },
+                {
+                    "text": "🪨 Внезапно — обвал. Камни падают сверху. Вы прижимаетесь к стене. Нужно решить быстро.",
+                    "options": [
+                        {"text": "Прыгну вниз — на уступ ниже", "soft": False},
+                        {"text": "Останусь на месте — камни пройдут", "soft": True},
+                        {"text": "Спрячусь в трещине — пережду", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Камни падают мимо. Вы живы. Но уступ, на котором вы стояли, исчез.",
+                        "soft": "Камни проходят стороной. Вы отряхиваетесь и идёте дальше.",
+                        "mixed": "Трещина узкая. Вы едва влезаете. Камни бьют по стене рядом.",
+                    }
+                },
+                {
+                    "text": "🏕️ На выступе — старый лагерь. Палатка порвана. Костёр погас. Рядом — записи. Последняя строка: «Оно говорит. Оно не спит. Оно ждёт ответа».",
+                    "options": [
+                        {"text": "Прочитаю записи до конца", "soft": False},
+                        {"text": "Осмотрю лагерь — поищу ещё что-то", "soft": True},
+                        {"text": "Оставлю всё и пойду дальше", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Дневник обрывается. Больше ничего. Только тишина. И тепло снизу.",
+                        "soft": "Вы находите карту. На ней отмечено озеро внизу. И что-то ещё. Стёртое.",
+                        "mixed": "Вы уходите, и записи остаются. Но слова в голове звучат снова. «Ждёт ответа».",
+                    }
+                },
+                {
+                    "text": "🌫️ Спуск продолжается. Впереди — узкий карниз. Держаться не за что. Внизу — темнота. И жар.",
+                    "options": [
+                        {"text": "Пойду первым — проверю", "soft": False},
+                        {"text": "Пойдём вместе, держась за стену", "soft": True},
+                        {"text": "Отступлю — поищу другой путь", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Карниз держит. Вы проходите. Медленно. Осторожно. Молча.",
+                        "soft": "Вы идёте вдвоём, и это помогает. Там, где один бы упал, двое проходят.",
+                        "mixed": "Вы отступаете, и карниз рушится. Но вы живы. И идёте другим путём.",
+                    }
+                },
+            ]
+        },
+        {
+            "name": "🌋 Лавовое озеро",
+            "intro": "Вы спускаетесь вниз, и перед вами открывается зал. Огромный. В центре — озеро лавы. Оно не бурлит. Оно спокойно. И в этом спокойствии — что-то живое. Из лавы поднимается фигура. Огненная. Высокая. Она смотрит на вас.",
+            "questions": [
+                {
+                    "text": "🌋 Элементал поднимается из лавы. Он огромен. Его голос — как гул земли. Он говорит: «Вы пришли. Значит, мир ещё помнит обо мне».",
+                    "options": [
+                        {"text": "Спрошу, кто он", "soft": True},
+                        {"text": "Промолчу — пусть говорит", "soft": True},
+                        {"text": "Скажу прямо — мы пришли узнать, почему он проснулся", "soft": False},
+                    ],
+                    "bridges": {
+                        "same": "Он смотрит на вас. Долго. И в его взгляде — усталость. Древняя. Как сам вулкан.",
+                        "soft": "Он опускается в лаву. Медленно. «Я спал. Но мир стал громче. Я проснулся».",
+                        "mixed": "Он говорит: «Ты не боишься. Это хорошо. Мне надоели те, кто боится».",
+                    }
+                },
+                {
+                    "text": "🔥 Элементал говорит: «Мир полон боли. Войн. Предательств. Я видел это тысячу лет. Зачем ему существовать?»",
+                    "options": [
+                        {"text": "Отвечу чувствами — расскажу о том, что видел хорошего", "soft": True},
+                        {"text": "Отвечу доводами — приведу логические аргументы", "soft": False},
+                        {"text": "Покажу ему нас — то, что мы вместе", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Он слушает. И в его огне что-то меняется. Тускнеет. Медленно.",
+                        "soft": "Он качает головой. «Слова. Все говорят слова». Но он слушает. И это важно.",
+                        "mixed": "Вы показываете ему себя, и он смотрит. Внимательнее, чем прежде.",
+                    }
+                },
+                {
+                    "text": "⚔️ В зал врываются четверо. Те самые. Они уже здесь. Маг начинает чертить руны на полу. Лидер кричит: «Мы обрушим вулкан! Так безопаснее!»",
+                    "options": [
+                        {"text": "Попробую их остановить — ритуал убьёт Элементала", "soft": True},
+                        {"text": "Отступлю — их не переубедить", "soft": False},
+                        {"text": "Спрошу напарника — что он думает", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Лидер смотрит на вас. Долго. Потом говорит: «Значит, вы с ним. Тогда пеняйте на себя».",
+                        "soft": "Они продолжают. Не слушают. Руны светятся ярче. Время идёт.",
+                        "mixed": "Вы спрашиваете напарника, и лидер усмехается: «Совещайтесь. У вас минута».",
+                    }
+                },
+                {
+                    "text": "💥 Руны горят. Ритуал почти завершён. Лава поднимается. Элементал ревёт от ярости. У вас есть один момент, чтобы выбрать, как спастись и что сделать.",
+                    "options": [
+                        {"text": "Разорву круг рун — рискую, но спасаю Элементала и город", "soft": True},
+                        {"text": "Схвачу напарника и побегу к выходу — выживем, но вулкан взорвётся", "soft": False},
+                        {"text": "Крикну Элементалу, чтобы он уходил из лавы — доверюсь ему", "soft": True},
+                    ],
+                    "bridges": {
+                        "same": "Вы бросаетесь к рунам. Пальцы жжёт, но вы стираете одну за другой. Ритуал рвётся. Элементал смотрит на вас. И что-то в его взгляде меняется. Навсегда.",
+                        "soft": "Вы бежите к выходу. За спиной — грохот, лава, крики. Вы выбираетесь. Живые. Но город внизу — под угрозой. И вы это знаете.",
+                        "mixed": "Вы кричите Элементалу. Он слышит. И уходит из лавы — глубоко, туда, где его не достанут. Руны вспыхивают, но бьют в пустоту. Вы живы. Все живы. Чудом.",
+                    }
+                },
+            ]
+        },
+    ],
+    "flag_question": 1,
+    "flag_options": ["Отступлю — не хочу драки", "Отвечу прямо: «Мы идём вместе или не идёт никто»", "Обойду их молча — пусть идут своей дорогой"],
+    "flag_effects": {
+        "0": {"target_question": 7, "add_text": "Элементал говорит: «Ты не стал драться. Мудро. Но славы ты не получишь»."},
+        "1": {"target_question": 7, "add_text": "Элементал говорит: «Ты бросил им вызов. Это достойно. Даже если ты слаб»."},
+        "2": {"target_question": 7, "add_text": "Элементал говорит: «Ты выбрал путь в обход. Хитро. И одиноко»."},
+    }
+}
+# -*- coding: utf-8 -*-
+# ============================================================
+# ЧАСТЬ 4: ОБРАБОТЧИКИ
+# ============================================================
+
+from datetime import timezone
+from aiogram.exceptions import TelegramBadRequest
+
+# ========== FSM ==========
+class Reg(StatesGroup):
+    consent = State()
+    nickname = State()
+    age = State()
+    city = State()
+    mayak = State()
+    tags = State()
+    red_flags = State()
+
+class Edit(StatesGroup):
+    field = State()
+
+class Exchange(StatesGroup):
+    msg = State()
 
 # ========== БОТ ==========
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties())
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# ========== ЕЖЕДНЕВНЫЙ ВХОД ==========
-async def check_daily(user, db):
-    now = datetime.datetime.utcnow()
-    today = now.date()
-    if user.last_daily:
-        last = user.last_daily.date()
-        delta = (today - last).days
-        if delta == 0:
-            return (False, 0, user.daily_streak)
-        elif delta == 1:
-            user.daily_streak += 1
+# ========== ХЕЛПЕРЫ БД ==========
+def get_user(tg_id: int):
+    with SessionLocal() as s:
+        return s.query(User).filter_by(tg_id=tg_id).first()
+
+def save_user(u: User):
+    with SessionLocal() as s:
+        s.merge(u)
+        s.commit()
+
+def get_user_tags(tg_id: int):
+    with SessionLocal() as s:
+        return s.query(UserTag).filter_by(user_id=tg_id).all()
+
+def get_red_flags(u: User):
+    if not u.red_flags:
+        return []
+    return [x for x in u.red_flags.split("|") if x]
+
+def set_red_flags(u: User, items):
+    u.red_flags = "|".join(items)
+    save_user(u)
+
+def get_session(tg_id: int):
+    """Возвращает активную сессию данжа для игрока."""
+    with SessionLocal() as s:
+        return s.query(DungeonSession).filter(
+            ((DungeonSession.player1_tg_id == tg_id) |
+             (DungeonSession.player2_tg_id == tg_id)) &
+            (DungeonSession.status == "active")
+        ).first()
+
+def save_session(ds: DungeonSession):
+    with SessionLocal() as s:
+        s.merge(ds)
+        s.commit()
+
+def is_user_ready_full(u: User) -> bool:
+    return bool(u and u.class_name and u.age and u.city and u.mayak)
+
+# ========== КЛАВИАТУРЫ ==========
+def kb_consent():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Согласен(-на)", callback_data="consent_yes")],
+        [InlineKeyboardButton(text="📄 Политика конфиденциальности", url=POLICY_URL)],
+    ])
+
+def kb_main():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎭 Профиль", callback_data="menu_profile"),
+         InlineKeyboardButton(text="🔍 Найти напарника", callback_data="menu_search")],
+        [InlineKeyboardButton(text="🎁 Ежедневный вход", callback_data="menu_daily")],
+        [InlineKeyboardButton(text="❓ Помощь", callback_data="menu_help")],
+    ])
+
+def kb_profile():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Найти напарника", callback_data="menu_search")],
+        [InlineKeyboardButton(text="✏️ Изменить анкету", callback_data="menu_edit")],
+        [InlineKeyboardButton(text="🗑 Удалить меня", callback_data="menu_delete")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back")],
+    ])
+
+def kb_edit():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Ник", callback_data="edit_nickname"),
+         InlineKeyboardButton(text="Возраст", callback_data="edit_age")],
+        [InlineKeyboardButton(text="Город", callback_data="edit_city"),
+         InlineKeyboardButton(text="Маяк", callback_data="edit_mayak")],
+        [InlineKeyboardButton(text="Мои границы", callback_data="edit_borders")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_profile")],
+    ])
+
+def kb_tags(cat_idx: int, tags: list, chosen: set):
+    rows = []
+    for i, tag in enumerate(tags):
+        mark = "✅ " if i in chosen else ""
+        rows.append([InlineKeyboardButton(text=f"{mark}{tag}", callback_data=f"tag_{cat_idx}_{i}")])
+    rows.append([InlineKeyboardButton(text="➡️ Дальше", callback_data=f"tag_ok_{cat_idx}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def kb_red_flags(chosen: set):
+    rows = []
+    for i, rf in enumerate(RED_FLAGS):
+        mark = "✅ " if i in chosen else ""
+        rows.append([InlineKeyboardButton(text=f"{mark}{rf}", callback_data=f"rf_{i}")])
+    rows.append([InlineKeyboardButton(text=f"➡️ Готово ({len(chosen)}/{MAX_RED_FLAGS})", callback_data="rf_ok")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def kb_question(options: list):
+    rows = []
+    for i, opt in enumerate(options):
+        rows.append([InlineKeyboardButton(text=opt["text"][:60], callback_data=f"q_{i}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def kb_exchange_ok():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Отправить", callback_data="ex_send")],
+    ])
+
+def kb_after_dungeon():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎭 Профиль", callback_data="menu_profile")],
+        [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")],
+    ])
+
+# ========== РЕНДЕР ПРОФИЛЯ ==========
+def render_profile(u: User) -> str:
+    lvl = calculate_level(u.experience)
+    cur, need = progress_to_next_level(u.experience)
+    bar = progress_bar(cur, need, 10)
+    tags = get_user_tags(u.tg_id)
+    tags_str = ", ".join(t.tag for t in tags[:8]) if tags else "—"
+    flags = get_red_flags(u)
+    flags_str = ", ".join(flags) if flags else "—"
+    pioneer = " 🏅 Первопроходец" if u.is_pioneer else ""
+    return (
+        f"🎭 <b>{u.username}</b>{pioneer}\n"
+        f"<b>{u.class_name}</b> · Уровень {lvl}\n"
+        f"{bar} {cur}/{need}\n\n"
+        f"📍 Город: {u.city or '—'}\n"
+        f"🎂 Возраст: {u.age or '—'}\n"
+        f"🌟 Маяк: {u.mayak or '—'}\n"
+        f"🚫 Мои границы: {flags_str}\n"
+        f"🏷 Теги: {tags_str}\n\n"
+        f"🎲 Рейдов пройдено: {u.full_dungeons}\n"
+        f"🔥 Стрик: {u.daily_streak} дней"
+    )
+
+# ========== /START ==========
+@dp.message(Command("start"))
+async def cmd_start(msg: Message, state: FSMContext):
+    await state.clear()
+    u = get_user(msg.from_user.id)
+    if u and u.consent_given:
+        await msg.answer(
+            f"👋 С возвращением, <b>{u.username}</b>!\n\n{render_profile(u)}",
+            reply_markup=kb_main(),
+        )
+        return
+    await msg.answer(
+        "👋 Привет! Это бот <b>«Порейдимся»</b> — знакомства в стиле RPG.\n\n"
+        "Прежде чем начать, нужно согласие на обработку персональных данных "
+        "(152-ФЗ). Мы храним только то, что ты сам введёшь: ник, возраст, город, "
+        "теги и «маяк».\n\n"
+        "Продолжая, ты подтверждаешь, что тебе 18+ и ты согласен(-на) с "
+        "обработкой данных.",
+        reply_markup=kb_consent(),
+    )
+    await state.set_state(Reg.consent)
+
+# ========== СОГЛАСИЕ ==========
+@dp.callback_query(F.data == "consent_yes")
+async def cb_consent(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    with SessionLocal() as s:
+        u = s.query(User).filter_by(tg_id=cb.from_user.id).first()
+        if not u:
+            # первые 1000 — первопроходцы
+            count = s.query(User).count()
+            u = User(
+                tg_id=cb.from_user.id,
+                username=cb.from_user.username or f"user_{cb.from_user.id}",
+                class_name="🎭 Странник",
+                consent_given=True,
+                is_18plus=True,
+                is_pioneer=(count < MAX_PREMIUM_USERS_FIRST_1000),
+            )
+            s.add(u)
         else:
-            user.daily_streak = 1
+            u.consent_given = True
+            u.is_18plus = True
+        s.commit()
+    await cb.message.edit_text("✅ Согласие получено.\n\nКак тебя зовут? Введи ник (2–20 символов).")
+    await state.set_state(Reg.nickname)
+
+# ========== РЕГИСТРАЦИЯ: НИК ==========
+@dp.message(Reg.nickname)
+async def reg_nick(msg: Message, state: FSMContext):
+    nick = (msg.text or "").strip()
+    if not (2 <= len(nick) <= 20) or contains_link(nick):
+        await msg.answer("❌ Ник должен быть 2–20 символов, без ссылок и @. Попробуй ещё раз.")
+        return
+    u = get_user(msg.from_user.id)
+    u.username = nick
+    save_user(u)
+    await state.update_data(nickname=nick)
+    await msg.answer("Сколько тебе лет? (только число)")
+    await state.set_state(Reg.age)
+
+# ========== ВОЗРАСТ ==========
+@dp.message(Reg.age)
+async def reg_age(msg: Message, state: FSMContext):
+    try:
+        age = int((msg.text or "").strip())
+    except ValueError:
+        await msg.answer("❌ Введи число, например: 22")
+        return
+    if not (18 <= age <= 99):
+        await msg.answer("❌ Возраст от 18 до 99.")
+        return
+    u = get_user(msg.from_user.id)
+    u.age = age
+    save_user(u)
+    await msg.answer("Из какого ты города?")
+    await state.set_state(Reg.city)
+
+# ========== ГОРОД ==========
+@dp.message(Reg.city)
+async def reg_city(msg: Message, state: FSMContext):
+    city = (msg.text or "").strip()[:100]
+    if len(city) < 2 or contains_link(city):
+        await msg.answer("❌ Название города — 2–100 символов, без ссылок.")
+        return
+    u = get_user(msg.from_user.id)
+    u.city = city
+    save_user(u)
+    await msg.answer(
+        "🌟 <b>Маяк</b> — это то, что важно для тебя в людях. "
+        "Одна фраза о том, каким(-ой) должен(-на) быть твой напарник.\n\n"
+        "Напиши свой «Маяк» (до 200 символов)."
+    )
+    await state.set_state(Reg.mayak)
+
+# ========== МАЯК ==========
+@dp.message(Reg.mayak)
+async def reg_mayak(msg: Message, state: FSMContext):
+    text = (msg.text or "").strip()[:200]
+    if len(text) < 5 or contains_link(text):
+        await msg.answer("❌ Маяк — 5–200 символов, без ссылок.")
+        return
+    u = get_user(msg.from_user.id)
+    u.mayak = text
+    save_user(u)
+    # Теги: 6 категорий по 6 тегов, выбираем по 1 в каждой
+    await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
+    await send_tag_question(msg, state)
+
+async def send_tag_question(msg_or_cb, state: FSMContext):
+    data = await state.get_data()
+    idx = data.get("tag_cat", 0)
+    if idx >= len(TAG_QUESTIONS):
+        # все категории пройдены → на границы
+        await state.update_data(rf_chosen=[])
+        text = (
+            "🚫 <b>Мои границы</b>\n\n"
+            "Выбери до 3 стоп-факторов — то, что точно не подойдёт в напарнике.\n"
+            "Они показываются после 1-й фазы данжа."
+        )
+        if isinstance(msg_or_cb, CallbackQuery):
+            await msg_or_cb.message.edit_text(text, reply_markup=kb_red_flags(set()))
+        else:
+            await msg_or_cb.answer(text, reply_markup=kb_red_flags(set()))
+        await state.set_state(Reg.red_flags)
+        return
+    q = TAG_QUESTIONS[idx]
+    text = f"🏷 <b>Теги · {idx+1}/{len(TAG_QUESTIONS)}</b>\n\n{q['question']}\n\nВыбери 1 тег:"
+    kb = kb_tags(idx, q["tags"], set(data.get("tag_chosen", [])))
+    if isinstance(msg_or_cb, CallbackQuery):
+        await msg_or_cb.message.edit_text(text, reply_markup=kb)
     else:
-        user.daily_streak = 1
-    user.last_daily = now
-    streak = user.daily_streak
-    exp_bonus = min(10 + (streak - 1) * 5, 50)
-    user.experience = (user.experience or 0) + exp_bonus
-    user.level = calculate_level(user.experience)
-    db.commit()
-    return (True, exp_bonus, streak)
+        await msg_or_cb.answer(text, reply_markup=kb)
 
-# ========== МАТЧМЕЙКЕР (ФОН) ==========
-async def matchmaker_checker():
-    while True:
-        try:
-            await asyncio.sleep(10)
-            with SessionLocal() as db:
-                now = datetime.datetime.utcnow()
-                searching = db.execute(select(User).where(User.status == "searching")).scalars().all()
-                # Таймаут 3 минуты
-                for u in searching:
-                    if u.search_started_at and (now - u.search_started_at).total_seconds() > SEARCH_MAX_SECONDS:
-                        u.status = "idle"; u.search_started_at = None
-                        db.commit()
-                        try:
-                            await bot.send_message(chat_id=u.tg_id,
-                                text="😔 Пока никого не нашлось. Попробуй позже.",
-                                reply_markup=main_menu())
-                        except: pass
-                searching = db.execute(select(User).where(User.status == "searching")).scalars().all()
-                matched = set()
-                for i, u1 in enumerate(searching):
-                    if u1.tg_id in matched: continue
-                    for u2 in searching[i+1:]:
-                        if u2.tg_id in matched: continue
-                        if _is_match(u1, u2):
-                            matched.add(u1.tg_id); matched.add(u2.tg_id)
-                            await _connect_pair(u1, u2, db)
-                            break
-                db.commit()
-        except Exception as e:
-            print(f"⚠️ matchmaker error: {e}")
+@dp.callback_query(F.data.startswith("tag_"), Reg.tags)
+async def cb_tag(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    parts = cb.data.split("_")
+    data = await state.get_data()
+    idx = data.get("tag_cat", 0)
+    if parts[1] == "ok":
+        # сохранить выбранные и перейти дальше
+        chosen = data.get("tag_chosen", [])
+        if not chosen:
+            await cb.answer("Выбери хотя бы 1 тег", show_alert=True)
+            return
+        all_tags = data.get("all_tags", [])
+        q = TAG_QUESTIONS[idx]
+        for tag_i in chosen:
+            all_tags.append((q["category"], q["tags"][tag_i]))
+        with SessionLocal() as s:
+            s.query(UserTag).filter_by(user_id=cb.from_user.id).delete()
+            for cat, tag in all_tags:
+                s.add(UserTag(user_id=cb.from_user.id, category=cat, tag=tag))
+            s.commit()
+        await state.update_data(
+            tag_cat=idx + 1,
+            tag_chosen=[],
+            all_tags=all_tags,
+        )
+        await send_tag_question(cb, state)
+        return
+    # toggle tag
+    i = int(parts[1]) if parts[1] != "ok" else -1
+    # parts: ["tag", "<i>", "<idx>"] для toggle, ["tag", "ok", "<idx>"] для ok
+    if len(parts) == 3 and parts[1] != "ok":
+        tag_i = int(parts[1])
+    else:
+        tag_i = -1
+    # упростим: используем отдельный формат
+    return
 
-def _get_stage(user, now):
-    if not user.search_started_at: return 1
-    e = (now - user.search_started_at).total_seconds()
-    if e < 15: return 1
-    if e < 30: return 2
-    if e < 45: return 3
-    if e < 60: return 4
-    return 5
+# Упрощённая обработка тегов (актуальная)
+@dp.callback_query(F.data.regexp(r"^tag_\d+_\d+$"), Reg.tags)
+async def cb_tag_toggle(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    _, cat_s, tag_s = cb.data.split("_")
+    cat_i, tag_i = int(cat_s), int(tag_s)
+    data = await state.get_data()
+    chosen = set(data.get("tag_chosen", []))
+    if tag_i in chosen:
+        chosen.discard(tag_i)
+    else:
+        # 1 тег в категории
+        chosen = {tag_i}
+    await state.update_data(tag_chosen=list(chosen))
+    q = TAG_QUESTIONS[cat_i]
+    await cb.message.edit_reply_markup(reply_markup=kb_tags(cat_i, q["tags"], chosen))
 
-def _is_match(u1, u2):
+# ========== МОИ ГРАНИЦЫ ==========
+@dp.callback_query(F.data.regexp(r"^rf_\d+$"), Reg.red_flags)
+async def cb_rf_toggle(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    i = int(cb.data.split("_")[1])
+    data = await state.get_data()
+    chosen = set(data.get("rf_chosen", []))
+    if i in chosen:
+        chosen.discard(i)
+    else:
+        if len(chosen) >= MAX_RED_FLAGS:
+            await cb.answer(f"Максимум {MAX_RED_FLAGS}", show_alert=True)
+            return
+        chosen.add(i)
+    await state.update_data(rf_chosen=list(chosen))
+    await cb.message.edit_reply_markup(reply_markup=kb_red_flags(chosen))
+
+@dp.callback_query(F.data == "rf_ok", Reg.red_flags)
+async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    data = await state.get_data()
+    chosen = data.get("rf_chosen", [])
+    u = get_user(cb.from_user.id)
+    set_red_flags(u, [RED_FLAGS[i] for i in chosen])
+    # назначить класс по квизу
+    await state.clear()
+    await cb.message.edit_text(
+        "🎯 Последний шаг — короткий квиз на класс (5 вопросов).",
+    )
+    await send_quiz_question(cb, 0)
+
+# ========== КВИЗ НА КЛАСС ==========
+async def send_quiz_question(target, q_idx: int, scores: dict = None):
+    if scores is None:
+        scores = {c: 0 for c in ALL_BASE_CLASSES}
+    if q_idx >= len(QUIZ):
+        # определить класс
+        cls_name, cls_desc = get_hybrid_class(scores)
+        u = get_user(target.from_user.id if hasattr(target, "from_user") else target.chat.id)
+        u.class_name = cls_name
+        save_user(u)
+        text = (
+            f"🎉 Твой класс: <b>{cls_name}</b>\n\n{cls_desc}\n\n"
+            f"Регистрация завершена! Открываю профиль…"
+        )
+        if isinstance(target, CallbackQuery):
+            await target.message.edit_text(text)
+        else:
+            await target.answer(text)
+        # показать профиль
+        u = get_user(target.from_user.id)
+        await bot.send_message(target.from_user.id, render_profile(u), reply_markup=kb_main())
+        return
+    q = QUIZ[q_idx]
+    text = f"🎯 <b>Вопрос {q_idx+1}/{len(QUIZ)}</b>\n\n{q['text']}"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=opt_text[:60], callback_data=f"quiz_{q_idx}_{i}")]
+        for i, (opt_text, cls) in enumerate(q["options"])
+    ])
+    # сохраняем scores в state
+    if isinstance(target, CallbackQuery):
+        await target.message.edit_text(text, reply_markup=kb)
+    else:
+        await target.answer(text, reply_markup=kb)
+    # сохраняем в FSMContext? Проще — храним в глобальном dict
+    QUIZ_SCORES[target.from_user.id if isinstance(target, CallbackQuery) else target.chat.id] = {
+        "idx": q_idx, "scores": scores,
+    }
+
+QUIZ_SCORES = {}
+
+@dp.callback_query(F.data.regexp(r"^quiz_\d+_\d+$"))
+async def cb_quiz(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    _, q_s, opt_s = cb.data.split("_")
+    q_i, opt_i = int(q_s), int(opt_s)
+    st = QUIZ_SCORES.get(cb.from_user.id)
+    if not st or st["idx"] != q_i:
+        await cb.answer("Устарело, начни заново", show_alert=True)
+        return
+    scores = st["scores"]
+    cls = QUIZ[q_i]["options"][opt_i][1]
+    scores[cls] = scores.get(cls, 0) + 1
+    await send_quiz_question(cb, q_i + 1, scores)
+
+# ========== ПРОФИЛЬ ==========
+@dp.callback_query(F.data == "menu_profile")
+async def cb_profile(cb: CallbackQuery):
+    await cb.answer()
+    u = get_user(cb.from_user.id)
+    if not u or not u.consent_given:
+        await cb.message.edit_text("Сначала /start")
+        return
+    await cb.message.edit_text(render_profile(u), reply_markup=kb_profile())
+
+@dp.callback_query(F.data == "menu_back")
+async def cb_back(cb: CallbackQuery):
+    await cb.answer()
+    u = get_user(cb.from_user.id)
+    await cb.message.edit_text(render_profile(u), reply_markup=kb_main())
+
+@dp.callback_query(F.data == "menu_help")
+async def cb_help(cb: CallbackQuery):
+    await cb.answer()
+    await cb.message.edit_text(
+        "❓ <b>Помощь</b>\n\n"
+        "🔍 Найти напарника — ищем по городу, возрасту ±2 и общим тегам.\n"
+        "🎁 Ежедневный вход — получай опыт за стрик.\n"
+        "🎭 Профиль — уровень, теги, границы.\n\n"
+        "Команды: /setname /setage /setcity /setkey /settaboo\n"
+        "/reset /delete_me /support /privacy",
+        reply_markup=kb_main(),
+    )
+
+# ========== ЕЖЕДНЕВНЫЙ ВХОД ==========
+@dp.callback_query(F.data == "menu_daily")
+async def cb_daily(cb: CallbackQuery):
+    await cb.answer()
+    u = get_user(cb.from_user.id)
     now = datetime.datetime.utcnow()
-    return _fits(u1, u2, now) and _fits(u2, u1, now)
+    last = u.last_daily
+    if last and (now - last).total_seconds() < 86400:
+        await cb.answer("Ты уже забирал награду сегодня. Приходи завтра!", show_alert=True)
+        return
+    if last and (now - last).total_seconds() < 172800:
+        u.daily_streak += 1
+    else:
+        u.daily_streak = 1
+    reward = min(10 + (u.daily_streak - 1) * 10, 50)
+    u.experience += reward
+    u.last_daily = now
+    save_user(u)
+    await cb.message.edit_text(
+        f"🎁 <b>Ежедневный вход!</b>\n\n"
+        f"🔥 Стрик: {u.daily_streak} дней\n"
+        f"✨ +{reward} опыта\n\n"
+        f"{render_profile(u)}",
+        reply_markup=kb_main(),
+    )
 
-def _fits(seeker, cand, now):
-    s = _get_stage(seeker, now)
-    if s <= 2:
-        if not (seeker.age - 2 <= cand.age <= seeker.age + 2): return False
-    elif s in (3, 4):
-        if not (seeker.age - 4 <= cand.age <= seeker.age + 4): return False
-    if s == 1 and seeker.city != cand.city: return False
-    if s in (1, 2, 3):
-        with SessionLocal() as db:
-            st = {t.tag for t in db.execute(select(UserTag).where(UserTag.user_id == seeker.id)).scalars().all()}
-            ct = {t.tag for t in db.execute(select(UserTag).where(UserTag.user_id == cand.id)).scalars().all()}
-        if not (st & ct): return False
-    return True
+# ========== РЕДАКТИРОВАНИЕ ==========
+@dp.callback_query(F.data == "menu_edit")
+async def cb_edit(cb: CallbackQuery):
+    await cb.answer()
+    await cb.message.edit_text("✏️ Что меняем?", reply_markup=kb_edit())
 
-async def _connect_pair(u1, u2, db):
-    u1.status = "matched"; u1.partner_tg_id = u2.tg_id; u1.is_ready = False; u1.search_started_at = None
-    u2.status = "matched"; u2.partner_tg_id = u1.tg_id; u2.is_ready = False; u2.search_started_at = None
-    db.commit()
-    u1_tags = db.execute(select(UserTag).where(UserTag.user_id == u1.id)).scalars().all()
-    u2_tags = db.execute(select(UserTag).where(UserTag.user_id == u2.id)).scalars().all()
-    shared = len({t.tag for t in u1_tags} & {t.tag for t in u2_tags})
+@dp.callback_query(F.data.startswith("edit_"))
+async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    field = cb.data.split("_", 1)[1]
+    if field == "borders":
+        await state.update_data(rf_chosen=[])
+        await cb.message.edit_text(
+            "🚫 <b>Мои границы</b>\n\nВыбери до 3:",
+            reply_markup=kb_red_flags(set()),
+        )
+        await state.set_state(Reg.red_flags)
+        return
+    await state.update_data(edit_field=field)
+    prompts = {
+        "nickname": "Новый ник (2–20 символов):",
+        "age": "Новый возраст (18–99):",
+        "city": "Новый город:",
+        "mayak": "Новый «Маяк» (5–200 символов):",
+    }
+    await cb.message.edit_text(prompts.get(field, "Введи значение:"))
+    await state.set_state(Edit.field)
+
+@dp.message(Edit.field)
+async def edit_save(msg: Message, state: FSMContext):
+    data = await state.get_data()
+    field = data.get("edit_field")
+    text = (msg.text or "").strip()
+    u = get_user(msg.from_user.id)
+    if field == "nickname":
+        if not (2 <= len(text) <= 20) or contains_link(text):
+            await msg.answer("❌ Ник 2–20 символов, без ссылок.")
+            return
+        u.username = text
+    elif field == "age":
+        try:
+            a = int(text)
+            if not (18 <= a <= 99):
+                raise ValueError
+        except ValueError:
+            await msg.answer("❌ Возраст 18–99.")
+            return
+        u.age = a
+    elif field == "city":
+        if len(text) < 2 or contains_link(text):
+            await msg.answer("❌ Город 2–100 символов.")
+            return
+        u.city = text
+    elif field == "mayak":
+        if len(text) < 5 or contains_link(text):
+            await msg.answer("❌ Маяк 5–200 символов.")
+            return
+        u.mayak = text
+    save_user(u)
+    await state.clear()
+    await msg.answer("✅ Готово!", reply_markup=kb_main())
+    await msg.answer(render_profile(u), reply_markup=kb_profile())
+
+# ========== /reset ==========
+@dp.message(Command("reset"))
+async def cmd_reset(msg: Message, state: FSMContext):
+    await state.clear()
+    await msg.answer("🔄 Состояние сброшено.", reply_markup=kb_main())
+
+# ========== /delete_me ==========
+@dp.message(Command("delete_me"))
+async def cmd_delete_me(msg: Message):
+    with SessionLocal() as s:
+        s.query(UserTag).filter_by(user_id=msg.from_user.id).delete()
+        s.query(User).filter_by(tg_id=msg.from_user.id).delete()
+        s.query(DungeonSession).filter(
+            (DungeonSession.player1_tg_id == msg.from_user.id) |
+            (DungeonSession.player2_tg_id == msg.from_user.id)
+        ).delete(synchronize_session=False)
+        s.commit()
+    await msg.answer("🗑 Все твои данные удалены. Напиши /start, чтобы начать заново.")
+
+# ========== /support /privacy ==========
+@dp.message(Command("support"))
+async def cmd_support(msg: Message):
+    await msg.answer(f"📧 Поддержка: {SUPPORT_EMAIL}")
+
+@dp.message(Command("privacy"))
+async def cmd_privacy(msg: Message):
+    await msg.answer(f"📄 Политика конфиденциальности:\n{POLICY_URL}")
+
+# ========== /setname /setage /setcity /setkey /settaboo ==========
+@dp.message(Command("setname"))
+async def cmd_setname(msg: Message, state: FSMContext):
+    await state.update_data(edit_field="nickname")
+    await msg.answer("Новый ник:")
+    await state.set_state(Edit.field)
+
+@dp.message(Command("setage"))
+async def cmd_setage(msg: Message, state: FSMContext):
+    await state.update_data(edit_field="age")
+    await msg.answer("Новый возраст:")
+    await state.set_state(Edit.field)
+
+@dp.message(Command("setcity"))
+async def cmd_setcity(msg: Message, state: FSMContext):
+    await state.update_data(edit_field="city")
+    await msg.answer("Новый город:")
+    await state.set_state(Edit.field)
+
+@dp.message(Command("setkey"))
+async def cmd_setkey(msg: Message, state: FSMContext):
+    await state.update_data(edit_field="mayak")
+    await msg.answer("Новый «Маяк»:")
+    await state.set_state(Edit.field)
+
+@dp.message(Command("settaboo"))
+async def cmd_settaboo(msg: Message, state: FSMContext):
+    await state.update_data(rf_chosen=[])
+    await msg.answer("🚫 Мои границы (до 3):", reply_markup=kb_red_flags(set()))
+    await state.set_state(Reg.red_flags)
+
+# ========== ПОИСК НАПАРНИКА ==========
+@dp.callback_query(F.data == "menu_search")
+async def cb_search(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    u = get_user(cb.from_user.id)
+    if not is_user_ready_full(u):
+        await cb.message.edit_text("❌ Сначала заполни анкету (/start).", reply_markup=kb_main())
+        return
+    # ищем партнёра
+    with SessionLocal() as s:
+        my_tags = {t.tag for t in s.query(UserTag).filter_by(user_id=u.tg_id).all()}
+        candidates = s.query(User).filter(
+            User.tg_id != u.tg_id,
+            User.status == "idle",
+            User.city == u.city,
+            User.age.between(u.age - 2, u.age + 2),
+            User.consent_given == True,
+        ).all()
+        partner = None
+        for c in candidates:
+            c_tags = {t.tag for t in s.query(UserTag).filter_by(user_id=c.tg_id).all()}
+            if my_tags & c_tags:
+                partner = c
+                break
+        if not partner:
+            await cb.message.edit_text(
+                "🔍 Пока никого не нашли. Попробуй позже — база растёт!",
+                reply_markup=kb_main(),
+            )
+            return
+        # создать сессию
+        theme_key = random.choice(list(DUNGEONS.keys()))
+        ds = DungeonSession(
+            player1_tg_id=u.tg_id,
+            player2_tg_id=partner.tg_id,
+            theme_key=theme_key,
+            status="active",
+        )
+        s.add(ds)
+        u.status = "dungeon"
+        partner.status = "dungeon"
+        u.partner_tg_id = partner.tg_id
+        partner.partner_tg_id = u.tg_id
+        s.commit()
+        ds_id = ds.id
+        p1_name = u.username
+        p2_name = partner.username
+    await cb.message.edit_text(f"🎉 Нашли напарника: <b>{p2_name}</b>!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…")
+    # уведомить партнёра
     try:
-        await bot.send_message(chat_id=u1.tg_id,
-            text=f"🎉 **Найден напарник!**\n\n👤 **{u2.username}**\n⚔️ Класс: {u2.class_name}\n"
-                 f"🎂 Возраст: {u2.age}\n🏙️ Город: {u2.city}\n🏷️ **Общих тегов: {shared}**\n\nГотов отправиться?",
-            reply_markup=ready_kb())
-    except Exception as e: print(f"⚠️ {e}")
-    try:
-        await bot.send_message(chat_id=u2.tg_id,
-            text=f"🎉 **Найден напарник!**\n\n👤 **{u1.username}**\n⚔️ Класс: {u1.class_name}\n"
-                 f"🎂 Возраст: {u1.age}\n🏙️ Город: {u1.city}\n🏷️ **Общих тегов: {shared}**\n\nГотов отправиться?",
-            reply_markup=ready_kb())
-    except Exception as e: print(f"⚠️ {e}")
-    print(f"🎯 Соединены: {u1.username} + {u2.username}")
+        await bot.send_message(partner.tg_id, f"🎉 Тебя выбрал(-а) <b>{p1_name}</b>!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…")
+    except Exception:
+        pass
+    # отправить первый вопрос обоим
+    await send_dungeon_question(ds_id)
 
-# ========== ТАЙМАУТ ==========
-async def timeout_checker():
+# ========== ДАНЖ ==========
+async def send_dungeon_question(ds_id: int):
+    with SessionLocal() as s:
+        ds = s.query(DungeonSession).get(ds_id)
+        if not ds or ds.status != "active":
+            return
+        theme = DUNGEONS[ds.theme_key]
+        phase = theme["phases"][ds.current_phase - 1]
+        if ds.current_question == 0:
+            # интро фазы
+            intro = f"{phase['name']}\n\n{phase['intro']}"
+            for tg in (ds.player1_tg_id, ds.player2_tg_id):
+                try:
+                    await bot.send_message(tg, intro)
+                except Exception:
+                    pass
+        q_list = phase["questions"]
+        if ds.current_question >= len(q_list):
+            # фаза закончена
+            await advance_phase(ds_id)
+            return
+        q = q_list[ds.current_question]
+        # сбросить готовность
+        ds.player1_answer = None
+        ds.player2_answer = None
+        ds.player1_ready = False
+        ds.player2_ready = False
+        ds.last_activity = datetime.datetime.utcnow()
+        s.commit()
+        for tg in (ds.player1_tg_id, ds.player2_tg_id):
+            try:
+                await bot.send_message(tg, q["text"], reply_markup=kb_question(q["options"]))
+            except Exception:
+                pass
+
+@dp.callback_query(F.data.regexp(r"^q_\d+$"))
+async def cb_answer(cb: CallbackQuery):
+    await cb.answer()
+    i = int(cb.data.split("_")[1])
+    with SessionLocal() as s:
+        ds = s.query(DungeonSession).filter(
+            ((DungeonSession.player1_tg_id == cb.from_user.id) |
+             (DungeonSession.player2_tg_id == cb.from_user.id)) &
+            (DungeonSession.status == "active")
+        ).first()
+        if not ds:
+            return
+        is_p1 = ds.player1_tg_id == cb.from_user.id
+        if is_p1 and ds.player1_ready:
+            return
+        if (not is_p1) and ds.player2_ready:
+            return
+        if is_p1:
+            ds.player1_answer = i
+            ds.player1_ready = True
+        else:
+            ds.player2_answer = i
+            ds.player2_ready = True
+        ds.last_activity = datetime.datetime.utcnow()
+        s.commit()
+        # оба ответили?
+        if ds.player1_ready and ds.player2_ready:
+            await cb.message.edit_reply_markup(reply_markup=None)
+            await resolve_question(ds.id, s)
+
+async def resolve_question(ds_id: int, s):
+    ds = s.query(DungeonSession).get(ds_id)
+    theme = DUNGEONS[ds.theme_key]
+    phase = theme["phases"][ds.current_phase - 1]
+    q = phase["questions"][ds.current_question]
+    a1, a2 = ds.player1_answer, ds.player2_answer
+    soft1 = q["options"][a1]["soft"]
+    soft2 = q["options"][a2]["soft"]
+    if a1 == a2:
+        kind = "same"
+        match = 1
+    elif soft1 == soft2:
+        kind = "soft"
+        match = 1
+    else:
+        kind = "mixed"
+        match = 0
+    bridge = q["bridges"][kind]
+    if ds.current_phase == 1:
+        ds.phase1_matches += match
+    elif ds.current_phase == 2:
+        ds.phase2_matches += match
+    else:
+        ds.phase3_matches += match
+    # мини-последствия
+    if ds.current_question == theme.get("flag_question") and not ds.flag_early_choice:
+        ds.flag_early_choice = str(a1)
+    # если целевой вопрос и есть флаг — показать доп-текст
+    flag_effects = theme.get("flag_effects", {})
+    add_text = ""
+    if ds.flag_early_choice in flag_effects:
+        eff = flag_effects[ds.flag_early_choice]
+        if eff["target_question"] == ds.current_question:
+            add_text = "\n\n" + eff["add_text"]
+    ds.current_question += 1
+    ds.last_activity = datetime.datetime.utcnow()
+    s.commit()
+    # отправить мостик обоим
+    for tg in (ds.player1_tg_id, ds.player2_tg_id):
+        try:
+            await bot.send_message(tg, bridge + add_text)
+        except Exception:
+            pass
+    # после 2-й фазы — обмен сообщениями
+    if ds.current_phase == 2 and ds.current_question >= len(phase["questions"]):
+        ds.msg_stage = 1
+        s.commit()
+        for tg in (ds.player1_tg_id, ds.player2_tg_id):
+            try:
+                await bot.send_message(tg, "💬 Теперь вы можете обменяться одним сообщением. Напиши что-нибудь напарнику (до 100 символов).")
+            except Exception:
+                pass
+        return
+    # следующий вопрос или следующая фаза
+    if ds.current_question >= len(phase["questions"]):
+        await advance_phase(ds_id, s)
+    else:
+        await send_dungeon_question(ds_id)
+
+async def advance_phase(ds_id: int, s=None):
+    own = s is None
+    if own:
+        s = SessionLocal()
+    try:
+        ds = s.query(DungeonSession).get(ds_id)
+        ds.current_phase += 1
+        ds.current_question = 0
+        ds.last_activity = datetime.datetime.utcnow()
+        if ds.current_phase > 3:
+            ds.status = "finished"
+            s.commit()
+            await finish_dungeon(ds_id, s)
+            return
+        s.commit()
+    finally:
+        if own:
+            s.close()
+    await send_dungeon_question(ds_id)
+
+# ========== ОБМЕН СООБЩЕНИЯМИ ==========
+@dp.message(Exchange.msg)
+async def exchange_msg(msg: Message, state: FSMContext):
+    text = (msg.text or "").strip()[:100]
+    if not text:
+        await msg.answer("Напиши текст до 100 символов.")
+        return
+    with SessionLocal() as s:
+        ds = s.query(DungeonSession).filter(
+            ((DungeonSession.player1_tg_id == msg.from_user.id) |
+             (DungeonSession.player2_tg_id == msg.from_user.id)) &
+            (DungeonSession.status == "active")
+        ).first()
+        if not ds:
+            await state.clear()
+            return
+        is_p1 = ds.player1_tg_id == msg.from_user.id
+        if is_p1:
+            ds.player1_msg = text
+        else:
+            ds.player2_msg = text
+        ds.msg_stage += 1
+        ds.last_activity = datetime.datetime.utcnow()
+        s.commit()
+        if ds.msg_stage >= 3:
+            # обмен закончен — отправить сообщения друг другу
+            other = ds.player2_tg_id if is_p1 else ds.player1_tg_id
+            try:
+                await bot.send_message(other, f"💬 Сообщение от напарника:\n\n{text}")
+            except Exception:
+                pass
+            # продолжить с 3-й фазы
+            await state.clear()
+            await send_dungeon_question(ds.id)
+        else:
+            await msg.answer("✅ Отправлено! Ждём ответ напарника.")
+
+# Перехват сообщений во время сессии (для обмена)
+@dp.message(F.text, ~F.text.startswith("/"))
+async def catch_exchange(msg: Message, state: FSMContext):
+    current = await state.get_state()
+    if current is not None:
+        return
+    with SessionLocal() as s:
+        ds = s.query(DungeonSession).filter(
+            ((DungeonSession.player1_tg_id == msg.from_user.id) |
+             (DungeonSession.player2_tg_id == msg.from_user.id)) &
+            (DungeonSession.status == "active") &
+            (DungeonSession.msg_stage == 1)
+        ).first()
+    if ds:
+        await state.set_state(Exchange.msg)
+        await exchange_msg(msg, state)
+
+# ========== ФИНАЛ ==========
+async def finish_dungeon(ds_id: int, s):
+    ds = s.query(DungeonSession).get(ds_id)
+    total = ds.phase1_matches + ds.phase2_matches + ds.phase3_matches
+    max_matches = 11
+    ratio = total / max_matches
+    if ratio >= 0.75:
+        verdict = "💖 Идеальный резонанс"
+        desc = "Вы совпали почти во всём. Это редкая находка."
+        reward = 100
+    elif ratio >= 0.5:
+        verdict = "✨ Хорошая совместимость"
+        desc = "Вам есть о чём поговорить и что разделить."
+        reward = 70
+    elif ratio >= 0.25:
+        verdict = "🤔 Есть над чем подумать"
+        desc = "Совпадений немного, но они есть."
+        reward = 40
+    else:
+        verdict = "💔 Слабый резонанс"
+        desc = "Вы слишком разные. Но это тоже опыт."
+        reward = 20
+    # обновить игроков
+    u1 = s.query(User).filter_by(tg_id=ds.player1_tg_id).first()
+    u2 = s.query(User).filter_by(tg_id=ds.player2_tg_id).first()
+    for u in (u1, u2):
+        if u:
+            u.experience += reward
+            u.full_dungeons += 1
+            u.status = "idle"
+            u.partner_tg_id = None
+    s.commit()
+    text = f"🏁 <b>Финал рейда</b>\n\n{verdict}\n{desc}\n\nСовпадений: {total}/{max_matches}\n✨ +{reward} опыта"
+    for tg in (ds.player1_tg_id, ds.player2_tg_id):
+        try:
+            await bot.send_message(tg, text, reply_markup=kb_after_dungeon())
+        except Exception:
+            pass
+
+# ========== ФОНОВАЯ ЗАДАЧА ТАЙМАУТА ==========
+async def timeout_worker():
+    """Каждые 60 сек закрываем сессии без активности >5 мин."""
     while True:
         try:
             await asyncio.sleep(60)
-            with SessionLocal() as db:
-                now = datetime.datetime.utcnow()
-                sessions = db.execute(select(DungeonSession).where(DungeonSession.status == "active")).scalars().all()
-                for s in sessions:
-                    if not s.last_activity: continue
-                    if (now - s.last_activity).total_seconds() < TURN_TIMEOUT_SECONDS: continue
-                    s.status = "finished"
-                    p1 = db.execute(select(User).where(User.tg_id == s.player1_tg_id)).scalar_one_or_none()
-                    p2 = db.execute(select(User).where(User.tg_id == s.player2_tg_id)).scalar_one_or_none()
-                    if p1: p1.status = "idle"; p1.partner_tg_id = None; p1.is_ready = False
-                    if p2: p2.status = "idle"; p2.partner_tg_id = None; p2.is_ready = False
-                    db.commit()
-                    text = "⏰ Напарник не ответил. Что-то пошло не так... Вы возвращаетесь в поиск подземелья."
-                    try: await bot.send_message(chat_id=s.player1_tg_id, text=text, reply_markup=main_menu())
-                    except: pass
-                    try: await bot.send_message(chat_id=s.player2_tg_id, text=text, reply_markup=main_menu())
-                    except: pass
-                    print(f"⏰ Таймаут #{s.id}")
+            cutoff = datetime.datetime.utcnow() - datetime.timedelta(seconds=TURN_TIMEOUT_SECONDS)
+            with SessionLocal() as s:
+                stale = s.query(DungeonSession).filter(
+                    DungeonSession.status == "active",
+                    DungeonSession.last_activity < cutoff,
+                ).all()
+                for ds in stale:
+                    ds.status = "finished"
+                    # освобождаем игроков
+                    for tg in (ds.player1_tg_id, ds.player2_tg_id):
+                        u = s.query(User).filter_by(tg_id=tg).first()
+                        if u:
+                            u.status = "idle"
+                            u.partner_tg_id = None
+                    s.commit()
+                    for tg in (ds.player1_tg_id, ds.player2_tg_id):
+                        try:
+                            await bot.send_message(
+                                tg,
+                                "⌛ Рейд прерван: слишком долго не было активности. "
+                                "Возвращайся в меню — и попробуй снова.",
+                                reply_markup=kb_main(),
+                            )
+                        except Exception:
+                            pass
         except Exception as e:
-            print(f"⚠️ timeout error: {e}")
+            logging.error(f"timeout_worker: {e}")
 
-# ========== СТАРТ ==========
-@dp.message(Command("start"))
-async def start(msg: Message, state: FSMContext):
-    await state.clear()
-    with SessionLocal() as db:
-        user = db.execute(select(User).where(User.tg_id == msg.from_user.id)).scalar_one_or_none()
-        if user and not user.consent_given:
-            await msg.answer(CONSENT_TEXT, reply_markup=consent_kb()); return
-        if user:
-            was_daily, exp_bonus, streak = await check_daily(user, db)
-            if was_daily:
-                await msg.answer(f"🔥 **Стрик: {streak} дн.** +{exp_bonus} опыта!")
-            await msg.answer(f"С возвращением, {user.username}! 🎮", reply_markup=main_menu())
-        else:
-            await msg.answer(CONSENT_TEXT, reply_markup=consent_kb())
-
-@dp.callback_query(F.data == "consent_yes")
-async def consent_yes(call: CallbackQuery):
-    with SessionLocal() as db:
-        user = db.execute(select(User).where(User.tg_id == call.from_user.id)).scalar_one_or_none()
-        if user:
-            user.consent_given = True; db.commit()
-            await call.message.edit_text(f"С возвращением, {user.username}! 🎮", reply_markup=main_menu())
-        else:
-            await call.message.edit_text(WELCOME, reply_markup=class_choice())
-    await call.answer("✅ Согласие получено!")
-
-@dp.callback_query(F.data == "consent_no")
-async def consent_no(call: CallbackQuery):
-    await call.message.edit_text("❌ Без согласия я не могу продолжить.\n\nЕсли передумаешь — напиши /start.")
-    await call.answer()
-
-# ========== КВИЗ ==========
-@dp.callback_query(F.data == "class_start")
-async def start_quiz(call: CallbackQuery, state: FSMContext):
-    await state.update_data(quiz_step=0, scores={c: 0 for c in ALL_CLASSES})
-    await ask_question(call.message, state, 0)
-    await call.answer()
-
-async def ask_question(message, state, step):
-    if step >= len(QUIZ):
-        await finish_quiz(message, state); return
-    q = QUIZ[step]
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=opt[0], callback_data=f"q_{step}_{i}")]
-        for i, opt in enumerate(q["options"])
-    ])
-    await message.edit_text(f"📜 Вопрос {step+1} из {len(QUIZ)}:\n\n{q['text']}", reply_markup=kb)
-
-@dp.callback_query(F.data.startswith("q_"))
-async def answer_quiz(call: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    parts = call.data.split("_")
-    step = int(parts[1]); idx = int(parts[2])
-    q = QUIZ[step]
-    cls = q["options"][idx][1]
-    scores = data.get("scores", {c: 0 for c in ALL_CLASSES})
-    scores[cls] = scores.get(cls, 0) + 2
-    await state.update_data(scores=scores)
-    await ask_question(call.message, state, step + 1)
-    await call.answer()
-
-async def finish_quiz(message, state):
-    data = await state.get_data()
-    scores = data.get("scores", {})
-    if not scores:
-        await message.edit_text("❌ Ошибка. Попробуй /start заново."); return
-    name, desc = get_hybrid_class(scores)
-    await state.update_data(class_name=name)
-    await message.edit_text(f"🎉 Ты — **{name}**!\n\n{desc}\n\nТеперь заполни анкету.")
-    await message.answer("📝 Введи **никнейм** (2–30 символов):", reply_markup=cancel_kb())
-    await state.set_state(RegForm.username)
-
-@dp.message(RegForm.username)
-async def set_username(msg: Message, state: FSMContext):
-    name = msg.text.strip()
-    if len(name) < 2 or len(name) > 30:
-        await msg.answer("❌ Никнейм 2–30 символов."); return
-    with SessionLocal() as db:
-        if db.execute(select(User).where(User.username == name)).scalar_one_or_none():
-            await msg.answer("❌ Никнейм занят."); return
-    await state.update_data(username=name)
-    await msg.answer("🎂 Сколько тебе лет? (16–99)", reply_markup=cancel_kb())
-    await state.set_state(RegForm.age)
-
-@dp.message(RegForm.age)
-async def set_age(msg: Message, state: FSMContext):
-    if not msg.text.isdigit():
-        await msg.answer("❌ Введи число."); return
-    age = int(msg.text)
-    if age < 16 or age > 99:
-        await msg.answer("❌ Возраст 16–99."); return
-    await state.update_data(age=age)
-    await msg.answer("🏙️ Из какого ты города?", reply_markup=cancel_kb())
-    await state.set_state(RegForm.city)
-
-@dp.message(RegForm.city)
-async def set_city(msg: Message, state: FSMContext):
-    await state.update_data(city=msg.text.strip())
-    await msg.answer(
-        "🔑 **Маяк** — что ты хочешь сказать о себе. До 100 символов.\n\n"
-        "Пример: *«М/25, ищу того, с кем можно обсудить аниме»*\n\n"
-        "Показывается напарнику **после 1-й фазы**.",
-        reply_markup=cancel_kb())
-    await state.set_state(RegForm.mayak)
-
-@dp.message(RegForm.mayak)
-async def set_mayak(msg: Message, state: FSMContext):
-    key = msg.text.strip()
-    if len(key) < 5 or len(key) > 100:
-        await msg.answer("❌ Маяк 5–100 символов."); return
-    await state.update_data(mayak_text=key, selected_tags={})
-    await state.set_state(RegForm.tag_step)
-    await ask_tag_question(msg, state, 0, msg.from_user.id)
-
-async def ask_tag_question(message, state, step, user_id):
-    if step >= len(TAG_QUESTIONS):
-        await state.update_data(selected_flags=[])
-        await message.answer(
-            "🚩 **Красные флаги**\n\nВыбери **до 3** или нажми «Готово» без выбора.",
-            reply_markup=red_flags_kb([]))
-        await state.set_state(RegForm.red_flags)
-        return
-    q = TAG_QUESTIONS[step]
-    await message.answer(f"{q['question']}\n\nВыбери один:", reply_markup=tag_question_kb(q["tags"], step))
-
-@dp.callback_query(F.data.startswith("tag_"))
-async def handle_tag(call: CallbackQuery, state: FSMContext):
-    parts = call.data.split("_")
-    step = int(parts[1]); idx = int(parts[2])
-    data = await state.get_data()
-    selected = data.get("selected_tags", {})
-    q = TAG_QUESTIONS[step]
-    selected[q["category"]] = q["tags"][idx]
-    await state.update_data(selected_tags=selected)
-    await ask_tag_question(call.message, state, step + 1, call.from_user.id)
-    await call.answer()
-
-@dp.callback_query(F.data.startswith("rf_"))
-async def handle_rf(call: CallbackQuery, state: FSMContext):
-    action = call.data.split("_")[1]
-    data = await state.get_data()
-    selected = data.get("selected_flags", [])
-    if action == "done":
-        flags_text = ", ".join([RED_FLAGS[i] for i in selected]) if selected else "Не указано"
-        await state.update_data(red_flags_text=flags_text)
-        await finish_registration(call.message, state, call.from_user.id)
-        await call.answer(); return
-    idx = int(action)
-    if idx in selected: selected.remove(idx)
-    else:
-        if len(selected) >= 3:
-            await call.answer("❌ Максимум 3", show_alert=True); return
-        selected.append(idx)
-    await state.update_data(selected_flags=selected)
-    try: await call.message.edit_reply_markup(reply_markup=red_flags_kb(selected))
-    except: pass
-    await call.answer()
-
-async def finish_registration(message, state, user_id):
-    data = await state.get_data()
-    selected_tags = data.get("selected_tags", {})
-    if len(selected_tags) != len(TAG_QUESTIONS):
-        await message.answer("❌ Выбери теги!"); return
-    with SessionLocal() as db:
-        if db.execute(select(User).where(User.tg_id == user_id)).scalar_one_or_none():
-            await message.answer("❌ Ты уже зарегистрирован!"); return
-        user = User(tg_id=user_id, username=data["username"], class_name=data["class_name"],
-                    age=data["age"], city=data["city"], mayak_text=data["mayak_text"],
-                    red_flags=data.get("red_flags_text", "Не указано"),
-                    status="idle", consent_given=True)
-        db.add(user); db.flush()
-        for cat, tag in selected_tags.items():
-            db.add(UserTag(user_id=user.id, category=cat, tag=tag))
-        db.commit()
-    await state.clear()
-    await message.answer(f"✅ Регистрация завершена! Добро пожаловать, {data['username']}! 🎉", reply_markup=main_menu())
-
-@dp.callback_query(F.data == "cancel")
-async def cancel_reg(call: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await call.message.edit_text("❌ Отменено. Напиши /start.")
-    await call.answer()
-
-# ========== ПРОФИЛЬ ==========
-@dp.callback_query(F.data == "profile")
-async def profile(call: CallbackQuery):
-    with SessionLocal() as db:
-        user = db.execute(select(User).where(User.tg_id == call.from_user.id)).scalar_one_or_none()
-        if not user:
-            await call.message.answer("❌ Ты не зарегистрирован!"); return
-        tags = db.execute(select(UserTag).where(UserTag.user_id == user.id)).scalars().all()
-        tags_text = "\n".join([f"• {t.category}: {t.tag}" for t in tags]) or "Не выбраны"
-        cur, tot = progress_to_next_level(user.experience or 0)
-        bar = "🏆 МАКС" if calculate_level(user.experience or 0) >= 5 else f"{progress_bar(cur, tot)} {cur}/{tot}"
-        await call.message.edit_text(PROFILE_TEMPLATE.format(
-            username=user.username, class_name=user.class_name, level=user.level, progress_bar=bar,
-            age=user.age or "Не указан", city=user.city or "Не указан",
-            mayak_text=user.mayak_text or "Не указан", red_flags=user.red_flags or "Не указано",
-            tags=tags_text, daily_streak=user.daily_streak or 0,
-            status=STATUS_NAMES.get(user.status, user.status)), reply_markup=main_menu())
-    await call.answer()
-
-@dp.callback_query(F.data == "edit_profile")
-async def edit_profile(call: CallbackQuery):
-    await call.message.edit_text(
-        "📝 Редактирование:\n/setname Имя\n/setage 25\n/setcity Москва\n/setmayak Текст\n/setflags",
-        reply_markup=main_menu())
-    await call.answer()
-
-# ========== МАТЧМЕЙКИНГ ==========
-@dp.callback_query(F.data == "find_match")
-async def find_match(call: CallbackQuery):
-    with SessionLocal() as db:
-        user = db.execute(select(User).where(User.tg_id == call.from_user.id)).scalar_one_or_none()
-        if not user:
-            await call.answer("❌ Не зарегистрирован!", show_alert=True); return
-        if not user.consent_given:
-            await call.answer("❌ Сначала /start", show_alert=True); return
-        if user.status in ("dungeon", "matched"):
-            await call.answer("⚔️ Ты занят!", show_alert=True); return
-        if user.status == "searching":
-            await call.answer("🔍 Ты уже в поиске", show_alert=True); return
-        user.status = "searching"; user.search_started_at = datetime.datetime.utcnow(); db.commit()
-    await call.message.answer(
-        "🔍 **Ищем напарника...**\n\nМы уведомим тебя, как только найдём пару.",
-        reply_markup=search_kb())
-    await call.answer()
-
-# ========== ГОТОВНОСТЬ ==========
-@dp.callback_query(F.data == "ready")
-async def ready_handler(call: CallbackQuery):
-    with SessionLocal() as db:
-        user = db.execute(select(User).where(User.tg_id == call.from_user.id)).scalar_one_or_none()
-        if not user or user.status != "matched" or not user.partner_tg_id:
-            await call.answer("❌ Нет поиска", show_alert=True); return
-        user.is_ready = True; db.commit()
-        partner = db.execute(select(User).where(User.tg_id == user.partner_tg_id)).scalar_one_or_none()
-        if not partner or not partner.is_ready:
-            await call.message.edit_text("⏳ **Ждём напарника...**")
-            await call.answer(); return
-        user.status = "dungeon"; partner.status = "dungeon"
-        theme_key = random.choice(list(DUNGEONS.keys()))
-        session = DungeonSession(player1_tg_id=user.tg_id, player2_tg_id=partner.tg_id,
-                                 theme_key=theme_key, current_phase=1, current_question=0,
-                                 status="active", last_activity=datetime.datetime.utcnow())
-        db.add(session); db.commit()
-        theme = DUNGEONS[theme_key]
-        q = theme["phases"][0]["questions"][0]
-        total = len(theme["phases"][0]["questions"])
-        intro = (f"🎲 **Подземелье: {theme['name']}**\n📍 Фаза 1/3 — {theme['phases'][0]['name']}\n"
-                 f"📊 Вопрос 1/{total}\n\n{q['text']}")
-        kb = dungeon_answer_kb(theme_key, 0, 0)
-        try: await call.message.edit_text(intro, reply_markup=kb)
-        except: await call.message.answer(intro, reply_markup=kb)
-        try: await bot.send_message(chat_id=partner.tg_id, text=intro, reply_markup=kb)
-        except Exception as e: print(f"⚠️ {e}")
-    await call.answer()
-
-# ========== ОТВЕТЫ В ДАНЖЕ ==========
-@dp.callback_query(F.data.startswith("da_"))
-async def dungeon_answer(call: CallbackQuery):
-    parts = call.data.split("_")
-    theme_key, phase_idx, q_idx, ans_idx = parts[1], int(parts[2]), int(parts[3]), int(parts[4])
-    with SessionLocal() as db:
-        user = db.execute(select(User).where(User.tg_id == call.from_user.id)).scalar_one_or_none()
-        if not user: await call.answer("❌", show_alert=True); return
-        session = db.execute(select(DungeonSession).where(
-            DungeonSession.status == "active",
-            ((DungeonSession.player1_tg_id == user.tg_id) | (DungeonSession.player2_tg_id == user.tg_id))
-        )).scalars().first()
-        if not session: await call.answer("❌ Нет сессии", show_alert=True); return
-        if session.theme_key != theme_key or session.current_phase != phase_idx + 1 or session.current_question != q_idx:
-            await call.answer("⏳ Уже другой вопрос", show_alert=True); return
-        if session.player1_tg_id == user.tg_id:
-            if session.player1_ready: await call.answer("✅ Уже ответил", show_alert=True); return
-            session.player1_answer = ans_idx; session.player1_ready = True
-        else:
-            if session.player2_ready: await call.answer("✅ Уже ответил", show_alert=True); return
-            session.player2_answer = ans_idx; session.player2_ready = True
-        session.last_activity = datetime.datetime.utcnow()
-        db.commit()
-        q = DUNGEONS[theme_key]["phases"][phase_idx]["questions"][q_idx]
-        await call.message.edit_text(f"✅ Твой выбор: **{q['options'][ans_idx]['text']}**\n\n⏳ Ждём напарника...")
-        await call.answer("Сохранено!")
-        if session.player1_ready and session.player2_ready:
-            await process_question(db, session, theme_key, phase_idx, q_idx)
-
-async def process_question(db, session, theme_key, phase_idx, q_idx):
-    q = DUNGEONS[theme_key]["phases"][phase_idx]["questions"][q_idx]
-    p1, p2 = session.player1_answer, session.player2_answer
-    same = (p1 == p2)
-    s1, s2 = q["options"][p1]["soft"], q["options"][p2]["soft"]
-    if same:
-        bridge = q["bridges"]["same"]
-        if phase_idx == 0: session.phase1_matches += 1
-        elif phase_idx == 1: session.phase2_matches += 1
-        else: session.phase3_matches += 1
-    elif s1 and s2:
-        bridge = q["bridges"]["soft"]
-        if phase_idx == 0: session.phase1_matches += 1
-        elif phase_idx == 1: session.phase2_matches += 1
-        else: session.phase3_matches += 1
-    else:
-        bridge = q["bridges"]["mixed"]
-    session.player1_ready = False; session.player2_ready = False
-    session.player1_answer = None; session.player2_answer = None
-    session.current_question += 1
-    session.last_activity = datetime.datetime.utcnow()
-    theme = DUNGEONS[theme_key]; phase = theme["phases"][phase_idx]
-    total_q = len(phase["questions"])
-    if session.current_question >= total_q:
-        if phase_idx == 0:
-            db.commit(); await send_end_phase_1(session, bridge); return
-        elif phase_idx == 1:
-            session.msg_stage = 0; session.player1_msg = None; session.player2_msg = None
-            db.commit(); await send_end_phase_2(session, bridge); return
-        else:
-            session.status = "finished"
-            p1u = db.execute(select(User).where(User.tg_id == session.player1_tg_id)).scalar_one_or_none()
-            p2u = db.execute(select(User).where(User.tg_id == session.player2_tg_id)).scalar_one_or_none()
-            exp = (session.phase1_matches + session.phase2_matches + session.phase3_matches) * 10
-            for pu in (p1u, p2u):
-                if pu:
-                    pu.status = "idle"; pu.partner_tg_id = None; pu.is_ready = False
-                    pu.full_dungeons = (pu.full_dungeons or 0) + 1
-                    pu.experience = (pu.experience or 0) + exp
-                    pu.level = calculate_level(pu.experience)
-            db.commit()
-            await send_final(session, p1u, p2u, exp)
-            return
-    nq = phase["questions"][session.current_question]
-    ntext = (f"{bridge}\n\n📍 Фаза {phase_idx + 1}/3 — {phase['name']}\n"
-             f"📊 Вопрос {session.current_question + 1}/{total_q}\n\n{nq['text']}")
-    nkb = dungeon_answer_kb(theme_key, phase_idx, session.current_question)
-    db.commit()
-    try: await bot.send_message(chat_id=session.player1_tg_id, text=ntext, reply_markup=nkb)
-    except: pass
-    try: await bot.send_message(chat_id=session.player2_tg_id, text=ntext, reply_markup=nkb)
-    except: pass
-
-async def send_end_phase_1(session, bridge):
-    with SessionLocal() as db:
-        p1 = db.execute(select(User).where(User.tg_id == session.player1_tg_id)).scalar_one_or_none()
-        p2 = db.execute(select(User).where(User.tg_id == session.player2_tg_id)).scalar_one_or_none()
-        t1 = (f"{bridge}\n\n🏁 **Фаза 1 пройдена!**\n\n🔑 **Маяк напарника:**\n_{p2.mayak_text if p2 else '—'}_\n\n"
-              f"🚩 **Красные флаги:**\n_{p2.red_flags if p2 and p2.red_flags else '—'}_\n\nГотов продолжить?")
-        t2 = (f"{bridge}\n\n🏁 **Фаза 1 пройдена!**\n\n🔑 **Маяк напарника:**\n_{p1.mayak_text if p1 else '—'}_\n\n"
-              f"🚩 **Красные флаги:**\n_{p1.red_flags if p1 and p1.red_flags else '—'}_\n\nГотов продолжить?")
-        try: await bot.send_message(chat_id=session.player1_tg_id, text=t1, reply_markup=continue_kb())
-        except: pass
-        try: await bot.send_message(chat_id=session.player2_tg_id, text=t2, reply_markup=continue_kb())
-        except: pass
-
-async def send_end_phase_2(session, bridge):
-    t = (f"{bridge}\n\n🏁 **Фаза 2 пройдена!**\n\n💬 **У тебя ОДНО сообщение для напарника.**\n"
-         f"Напиши что-то, что заставит его ответить. До 200 символов.\n\n"
-         f"Просто отправь текст боту — он передаст напарнику.")
-    try: await bot.send_message(chat_id=session.player1_tg_id, text=t)
-    except: pass
-    try: await bot.send_message(chat_id=session.player2_tg_id, text=t)
-    except: pass
-
-async def send_final(session, p1, p2, exp_gain):
-    total = 11
-    matches = session.phase1_matches + session.phase2_matches + session.phase3_matches
-    percent = int(matches / total * 100)
-    if percent >= 90: verdict = "✨ **Идеальный резонанс!**\n\nВы словно одна душа в двух телах."
-    elif percent >= 70: verdict = "💫 **Сильный синхрон!**\n\nУ вас много общего."
-    elif percent >= 50: verdict = "🤔 **Есть точки соприкосновения.**\n\nВы разные — но в этом и интерес."
-    else: verdict = "💎 **Вы настолько неповторимы, что найти похожего — почти невозможно.**"
-    if percent >= 50 and p1 and p2:
-        contacts = f"\n\n📞 **Держите связь:**\n• {p1.username}\n• {p2.username}\n\nНапишите друг другу!"
-    else:
-        contacts = "\n\n💭 Если захотите — попробуйте пройти другое подземелье вместе."
-    t = (f"🏁 **Приключение завершено!**\n\n💫 Синхрон: **{percent}%**\n"
-         f"✅ Совпадений: **{matches} из {total}**\n⭐ Опыт: **+{exp_gain}**\n\n{verdict}{contacts}")
-    try: await bot.send_message(chat_id=session.player1_tg_id, text=t, reply_markup=main_menu())
-    except: pass
-    try: await bot.send_message(chat_id=session.player2_tg_id, text=t, reply_markup=main_menu())
-    except: pass
-
-# ========== ОБМЕН СООБЩЕНИЯМИ ==========
-@dp.message()
-async def handle_text(msg: Message, state: FSMContext):
-    if msg.text and msg.text.startswith("/"): return
-    if not msg.text: return
-    with SessionLocal() as db:
-        user = db.execute(select(User).where(User.tg_id == msg.from_user.id)).scalar_one_or_none()
-        if not user or user.status != "dungeon": return
-        session = db.execute(select(DungeonSession).where(
-            DungeonSession.status == "active",
-            ((DungeonSession.player1_tg_id == user.tg_id) | (DungeonSession.player2_tg_id == user.tg_id))
-        )).scalars().first()
-        if not session: return
-        if session.current_phase != 2:
-            await msg.answer("✉️ Сейчас не время."); return
-        if session.msg_stage == 2:
-            await msg.answer("✉️ Уже обменялись."); return
-        t = msg.text.strip()[:200]
-        is_p1 = (session.player1_tg_id == user.tg_id)
-        if is_p1 and session.player1_msg: await msg.answer("✉️ Ты уже написал."); return
-        if not is_p1 and session.player2_msg: await msg.answer("✉️ Ты уже написал."); return
-        if is_p1: session.player1_msg = t; pid = session.player2_tg_id
-        else: session.player2_msg = t; pid = session.player1_tg_id
-        session.msg_stage += 1; session.last_activity = datetime.datetime.utcnow()
-        db.commit()
-        await msg.answer("✅ Отправлено.")
-        try: await bot.send_message(chat_id=pid, text=f"💬 **Сообщение от напарника:**\n\n_{t}_")
-        except: pass
-        if session.player1_msg and session.player2_msg:
-            nt = (f"💬 **Обмен завершён!**\n\nНапарник написал:\n_{session.player2_msg if is_p1 else session.player1_msg}_\n\nПродолжить?")
-            try: await bot.send_message(chat_id=session.player1_tg_id, text=nt, reply_markup=continue_kb())
-            except: pass
-            try: await bot.send_message(chat_id=session.player2_tg_id, text=nt, reply_markup=continue_kb())
-            except: pass
-
-# ========== ПРОДОЛЖЕНИЕ ==========
-@dp.callback_query(F.data == "dungeon_continue")
-async def dungeon_continue(call: CallbackQuery):
-    with SessionLocal() as db:
-        user = db.execute(select(User).where(User.tg_id == call.from_user.id)).scalar_one_or_none()
-        if not user: await call.answer(); return
-        session = db.execute(select(DungeonSession).where(
-            DungeonSession.status == "active",
-            ((DungeonSession.player1_tg_id == user.tg_id) | (DungeonSession.player2_tg_id == user.tg_id))
-        )).scalars().first()
-        if not session: await call.answer("❌ Нет сессии", show_alert=True); return
-        session.last_activity = datetime.datetime.utcnow()
-        if session.current_phase == 1 and session.current_question >= len(DUNGEONS[session.theme_key]["phases"][0]["questions"]):
-            session.current_phase = 2; session.current_question = 0
-            session.player1_ready = False; session.player2_ready = False; db.commit()
-            theme = DUNGEONS[session.theme_key]
-            q = theme["phases"][1]["questions"][0]
-            t = f"⚔️ **Фаза 2/3 — {theme['phases'][1]['name']}**\n📊 Вопрос 1/{len(theme['phases'][1]['questions'])}\n\n{q['text']}"
-            kb = dungeon_answer_kb(session.theme_key, 1, 0)
-            await call.message.edit_text("⚔️ Идём дальше...")
-            try: await bot.send_message(chat_id=session.player1_tg_id, text=t, reply_markup=kb)
-            except: pass
-            try: await bot.send_message(chat_id=session.player2_tg_id, text=t, reply_markup=kb)
-            except: pass
-        elif session.current_phase == 2 and session.msg_stage == 2:
-            session.current_phase = 3; session.current_question = 0
-            session.player1_ready = False; session.player2_ready = False
-            session.msg_stage = 0; session.player1_msg = None; session.player2_msg = None; db.commit()
-            theme = DUNGEONS[session.theme_key]
-            q = theme["phases"][2]["questions"][0]
-            t = f"⚔️ **Фаза 3/3 — {theme['phases'][2]['name']}**\n📊 Вопрос 1/{len(theme['phases'][2]['questions'])}\n\n{q['text']}"
-            kb = dungeon_answer_kb(session.theme_key, 2, 0)
-            await call.message.edit_text("⚔️ Финальная фаза...")
-            try: await bot.send_message(chat_id=session.player1_tg_id, text=t, reply_markup=kb)
-            except: pass
-            try: await bot.send_message(chat_id=session.player2_tg_id, text=t, reply_markup=kb)
-            except: pass
-        else:
-            await call.answer("⏳ Ждём напарника", show_alert=True)
-    await call.answer()
-
-# ========== ВЫХОД ==========
-@dp.callback_query(F.data == "dungeon_exit")
-async def dungeon_exit(call: CallbackQuery):
-    await call.message.edit_text("⚠️ **Выйти из приключения?** Прогресс будет потерян.", reply_markup=confirm_exit_kb())
-    await call.answer()
-
-@dp.callback_query(F.data == "dungeon_exit_cancel")
-async def dungeon_exit_cancel(call: CallbackQuery):
-    await call.message.edit_text("↩️ Возвращаемся...")
-    await call.answer()
-
-@dp.callback_query(F.data == "dungeon_exit_confirm")
-async def dungeon_exit_confirm(call: CallbackQuery):
-    with SessionLocal() as db:
-        user = db.execute(select(User).where(User.tg_id == call.from_user.id)).scalar_one_or_none()
-        if not user: await call.answer(); return
-        session = db.execute(select(DungeonSession).where(
-            DungeonSession.status == "active",
-            ((DungeonSession.player1_tg_id == user.tg_id) | (DungeonSession.player2_tg_id == user.tg_id))
-        )).scalars().first()
-        if not session: await call.answer(); return
-        session.status = "finished"
-        pid = session.player2_tg_id if session.player1_tg_id == user.tg_id else session.player1_tg_id
-        user.status = "idle"; user.partner_tg_id = None; user.is_ready = False
-        user.early_exits = (user.early_exits or 0) + 1
-        partner = db.execute(select(User).where(User.tg_id == pid)).scalar_one_or_none()
-        if partner: partner.status = "idle"; partner.partner_tg_id = None; partner.is_ready = False
-        db.commit()
-        await call.message.edit_text("❌ Покинул приключение.", reply_markup=main_menu())
-        try: await bot.send_message(chat_id=pid, text="❌ Напарник покинул приключение.", reply_markup=main_menu())
-        except: pass
-    await call.answer()
-
-@dp.callback_query(F.data == "cancel_match")
-async def cancel_match(call: CallbackQuery):
-    with SessionLocal() as db:
-        user = db.execute(select(User).where(User.tg_id == call.from_user.id)).scalar_one_or_none()
-        if not user: await call.answer(); return
-        pid = user.partner_tg_id
-        user.status = "idle"; user.partner_tg_id = None; user.is_ready = False; user.search_started_at = None
-        if pid:
-            partner = db.execute(select(User).where(User.tg_id == pid)).scalar_one_or_none()
-            if partner:
-                partner.status = "idle"; partner.partner_tg_id = None; partner.is_ready = False
-                partner.search_started_at = None
-        db.commit()
-        try: await call.message.edit_text("❌ Поиск отменён.", reply_markup=main_menu())
-        except: await call.message.answer("❌ Поиск отменён.", reply_markup=main_menu())
-        await call.answer()
-        if pid:
-            try: await bot.send_message(chat_id=pid, text="❌ Напарник отменил поиск.")
-            except: pass
-
-# ========== КОМАНДЫ ==========
-@dp.message(Command("setname"))
-async def setname(msg: Message):
-    n = msg.text.replace("/setname", "").strip()
-    if not n or len(n) < 2: await msg.answer("❌ /setname Артур"); return
-    with SessionLocal() as db:
-        u = db.execute(select(User).where(User.tg_id == msg.from_user.id)).scalar_one_or_none()
-        if not u: await msg.answer("❌ Не зарегистрирован!"); return
-        u.username = n; db.commit()
-        await msg.answer(f"✅ Имя: {n}")
-
-@dp.message(Command("setage"))
-async def setage(msg: Message):
-    a = msg.text.replace("/setage", "").strip()
-    if not a.isdigit() or int(a) < 16 or int(a) > 99: await msg.answer("❌ /setage 25"); return
-    with SessionLocal() as db:
-        u = db.execute(select(User).where(User.tg_id == msg.from_user.id)).scalar_one_or_none()
-        if not u: await msg.answer("❌ Не зарегистрирован!"); return
-        u.age = int(a); db.commit()
-        await msg.answer(f"✅ Возраст: {a}")
-
-@dp.message(Command("setcity"))
-async def setcity(msg: Message):
-    c = msg.text.replace("/setcity", "").strip()
-    if not c: await msg.answer("❌ /setcity Москва"); return
-    with SessionLocal() as db:
-        u = db.execute(select(User).where(User.tg_id == msg.from_user.id)).scalar_one_or_none()
-        if not u: await msg.answer("❌ Не зарегистрирован!"); return
-        u.city = c; db.commit()
-        await msg.answer(f"✅ Город: {c}")
-
-@dp.message(Command("setmayak"))
-async def setmayak(msg: Message):
-    k = msg.text.replace("/setmayak", "").strip()
-    if not k or len(k) < 5 or len(k) > 100: await msg.answer("❌ Маяк 5–100 символов."); return
-    with SessionLocal() as db:
-        u = db.execute(select(User).where(User.tg_id == msg.from_user.id)).scalar_one_or_none()
-        if not u: await msg.answer("❌ Не зарегистрирован!"); return
-        u.mayak_text = k; db.commit()
-        await msg.answer("✅ Маяк обновлён!")
-
-@dp.message(Command("setflags"))
-async def setflags(msg: Message):
-    await msg.answer("🚩 Для изменения: `/setflags Курение, Алкоголь`\n\nДоступные:\n" + "\n".join(RED_FLAGS))
-
-@dp.message(Command("reset"))
-async def reset_status(msg: Message):
-    with SessionLocal() as db:
-        u = db.execute(select(User).where(User.tg_id == msg.from_user.id)).scalar_one_or_none()
-        if not u: await msg.answer("❌ Не зарегистрирован!"); return
-        ss = db.execute(select(DungeonSession).where(
-            DungeonSession.status == "active",
-            ((DungeonSession.player1_tg_id == u.tg_id) | (DungeonSession.player2_tg_id == u.tg_id))
-        )).scalars().all()
-        for s in ss: s.status = "finished"
-        u.status = "idle"; u.partner_tg_id = None; u.is_ready = False; u.search_started_at = None
-        db.commit()
-    await msg.answer("✅ Сброшено.", reply_markup=main_menu())
-
-@dp.message(Command("delete_me"))
-async def delete_me(msg: Message):
-    with SessionLocal() as db:
-        u = db.execute(select(User).where(User.tg_id == msg.from_user.id)).scalar_one_or_none()
-        if not u: await msg.answer("❌ Не зарегистрирован!"); return
-        ss = db.execute(select(DungeonSession).where(
-            (DungeonSession.player1_tg_id == u.tg_id) | (DungeonSession.player2_tg_id == u.tg_id)
-        )).scalars().all()
-        for s in ss: db.delete(s)
-        ts = db.execute(select(UserTag).where(UserTag.user_id == u.id)).scalars().all()
-        for t in ts: db.delete(t)
-        db.delete(u); db.commit()
-    await msg.answer("✅ **Аккаунт удалён.** Согласие отозвано.\n\n/start — если передумаешь.")
-
-@dp.message(Command("support"))
-async def support_cmd(msg: Message):
-    await msg.answer(f"📩 Поддержка: `{SUPPORT_EMAIL}`")
-
-@dp.message(Command("privacy"))
-async def privacy_cmd(msg: Message):
-    await msg.answer(f"📄 {POLICY_URL}")
-
-# ========== ЗАПУСК ==========
+# ========== MAIN ==========
 async def main():
-    with SessionLocal() as db:
-        for s in db.execute(select(DungeonSession).where(DungeonSession.status == "active")).scalars().all():
-            s.status = "finished"
-        stuck = db.execute(select(User).where(User.status.in_(["dungeon", "matched", "searching"]))).scalars().all()
-        for u in stuck:
-            u.status = "idle"; u.partner_tg_id = None; u.is_ready = False; u.search_started_at = None
-        db.commit()
-        print(f"🧹 Сброшено: {len(stuck)}")
-    asyncio.create_task(matchmaker_checker())
-    asyncio.create_task(timeout_checker())
-    print("✅ База данных готова!")
-    print("🚀 Бот 'Рейд Сердец' запущен!")
+    logging.info("Бот запускается…")
+    asyncio.create_task(timeout_worker())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Бот остановлен")
