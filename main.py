@@ -3311,13 +3311,28 @@ async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
     await send_quiz_question(cb, 0)
 
 # ========== КВИЗ НА КЛАСС ==========
+QUIZ_SCORES = {}
+
+def _uid_from(target) -> int:
+    """Возвращает tg_id из CallbackQuery или Message."""
+    if isinstance(target, CallbackQuery):
+        return target.from_user.id
+    # Message
+    if target.from_user:
+        return target.from_user.id
+    return target.chat.id
+
 async def send_quiz_question(target, q_idx: int, scores: dict = None):
+    _uid = _uid_from(target)
     if scores is None:
         scores = {c: 0 for c in ALL_BASE_CLASSES}
     if q_idx >= len(QUIZ):
         # определить класс
         cls_name, cls_desc = get_hybrid_class(scores)
-        u = get_user(target.from_user.id if hasattr(target, "from_user") else target.chat.id)
+        u = get_user(_uid)
+        if not u:
+            QUIZ_SCORES.pop(_uid, None)
+            return
         u.class_name = cls_name
         save_user(u)
         text = (
@@ -3328,27 +3343,25 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None):
             await target.message.edit_text(text)
         else:
             await target.answer(text)
+        # чистим временный стейт квиза
+        QUIZ_SCORES.pop(_uid, None)
         # показать профиль
-        u = get_user(target.from_user.id)
-        await bot.send_message(target.from_user.id, render_profile(u), reply_markup=kb_main())
+        u = get_user(_uid)
+        await bot.send_message(_uid, render_profile(u), reply_markup=kb_main())
         return
+
     q = QUIZ[q_idx]
     text = f"🎯 <b>Вопрос {q_idx+1}/{len(QUIZ)}</b>\n\n{q['text']}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=opt_text[:60], callback_data=f"quiz_{q_idx}_{i}")]
         for i, (opt_text, cls) in enumerate(q["options"])
     ])
-    # сохраняем scores в state
     if isinstance(target, CallbackQuery):
         await target.message.edit_text(text, reply_markup=kb)
     else:
         await target.answer(text, reply_markup=kb)
-    # сохраняем в FSMContext? Проще — храним в глобальном dict
-    QUIZ_SCORES[target.from_user.id if isinstance(target, CallbackQuery) else target.chat.id] = {
-        "idx": q_idx, "scores": scores,
-    }
 
-QUIZ_SCORES = {}
+    QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
 
 @dp.callback_query(F.data.regexp(r"^quiz_\d+_\d+$"))
 async def cb_quiz(cb: CallbackQuery, state: FSMContext):
