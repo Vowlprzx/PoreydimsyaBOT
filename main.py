@@ -178,7 +178,7 @@ class Partnership(Base):
 
 # Создаём таблицы
 
-Base.metadata.drop_all(engine)
+Base.metadata.drop_all(engine) 
 Base.metadata.create_all(engine)
 
 
