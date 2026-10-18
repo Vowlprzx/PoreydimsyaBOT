@@ -434,9 +434,13 @@ RED_FLAGS = [
     "📵 Долгие ответы",
     "🎉 Сверхобщительность",
     "🤐 Замкнутость",
+    "🤬 Мат",
+    "🏛️ Политика",
+    "🧠 Психология",
+    "⛪ Религия",
 ]
 
-MAX_RED_FLAGS = 2  # пока 2. С уровнем откроется 3-й слот
+MAX_RED_FLAGS = 2  # 3-й слот откроется на 5 уровне (сделаем позже)
 
 
 # ========== АКТИВНАЯ ТЕМА ДЛЯ ТЕСТИРОВАНИЯ ==========
@@ -3030,7 +3034,7 @@ def kb_edit():
         [InlineKeyboardButton(text="Ник", callback_data="edit_nickname"),
          InlineKeyboardButton(text="Возраст", callback_data="edit_age")],
         [InlineKeyboardButton(text="Город", callback_data="edit_city"),
-         InlineKeyboardButton(text="Маяк", callback_data="edit_mayak")],
+        InlineKeyboardButton(text="Требование", callback_data="edit_mayak")],
         [InlineKeyboardButton(text="Мои границы", callback_data="edit_borders")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_profile")],
     ])
@@ -3084,8 +3088,8 @@ def render_profile(u: User) -> str:
         f"{bar} {cur}/{need}\n\n"
         f"📍 Город: {u.city or '—'}\n"
         f"🎂 Возраст: {u.age or '—'}\n"
-        f"🌟 Маяк: {u.mayak or '—'}\n"
-        f"🚫 Мои границы: {flags_str}\n"
+        f"🌟 Требование к напарнику: {u.mayak or '—'}\n"
+        f"🚩 Рэд флаги: {flags_str}\n"
         f"🏷 Теги: {tags_str}\n\n"
         f"🎲 Рейдов пройдено: {u.full_dungeons}\n"
         f"🔥 Стрик: {u.daily_streak} дней"
@@ -3179,10 +3183,9 @@ async def reg_city(msg: Message, state: FSMContext):
     u = get_user(msg.from_user.id)
     u.city = city
     save_user(u)
-    await msg.answer(
-        "🌟 <b>Маяк</b> — это то, что важно для тебя в людях. "
-        "Одна фраза о том, каким(-ой) должен(-на) быть твой напарник.\n\n"
-        "Напиши свой «Маяк» (до 200 символов)."
+       await msg.answer(
+        "🌟 <b>Требование к напарнику</b>\n"
+        "Напиши, кого бы ты хотел найти (до 200 символов)."
     )
     await state.set_state(Reg.mayak)
 
@@ -3207,9 +3210,9 @@ async def send_tag_question(msg_or_cb, state: FSMContext):
         # все категории пройдены → на границы
         await state.update_data(rf_chosen=[])
         text = (
-            "🚫 <b>Мои границы</b>\n\n"
-            "Выбери до 3 стоп-факторов — то, что точно не подойдёт в напарнике.\n"
-            "Они показываются после 1-й фазы данжа."
+         "🚩 <b>Рэд флаги</b>\n\n"
+        "Отметь до 2 пунктов — с чем точно не готов(-а) мириться в напарнике.\n"
+         "3-й слот откроется на 5 уровне."
         )
         if isinstance(msg_or_cb, CallbackQuery):
             await msg_or_cb.message.edit_text(text, reply_markup=kb_red_flags(set()))
@@ -3408,17 +3411,18 @@ async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
     if field == "borders":
         await state.update_data(rf_chosen=[])
         await cb.message.edit_text(
-            "🚫 <b>Мои границы</b>\n\nВыбери до 3:",
+            "🚩 <b>Рэд флаги</b>\n\nВыбери до 2:",
             reply_markup=kb_red_flags(set()),
         )
         await state.set_state(Reg.red_flags)
         return
+    
     await state.update_data(edit_field=field)
     prompts = {
         "nickname": "Новый ник (2–20 символов):",
         "age": "Новый возраст (18–99):",
         "city": "Новый город:",
-        "mayak": "Новый «Маяк» (5–200 символов):",
+        "mayak": "Новое требование к напарнику (5–200 символов):",
     }
     await cb.message.edit_text(prompts.get(field, "Введи значение:"))
     await state.set_state(Edit.field)
@@ -3487,11 +3491,11 @@ async def cmd_privacy(msg: Message):
     await msg.answer(f"📄 Политика конфиденциальности:\n{POLICY_URL}")
 
 # ========== /setname /setage /setcity /setkey /settaboo ==========
-@dp.message(Command("setname"))
-async def cmd_setname(msg: Message, state: FSMContext):
-    await state.update_data(edit_field="nickname")
-    await msg.answer("Новый ник:")
-    await state.set_state(Edit.field)
+@dp.message(Command("settaboo"))
+async def cmd_settaboo(msg: Message, state: FSMContext):
+    await state.update_data(rf_chosen=[])
+    await msg.answer("🚩 Рэд флаги (до 2):", reply_markup=kb_red_flags(set()))
+    await state.set_state(Reg.red_flags)
 
 @dp.message(Command("setage"))
 async def cmd_setage(msg: Message, state: FSMContext):
