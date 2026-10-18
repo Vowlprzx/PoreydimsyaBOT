@@ -3183,7 +3183,7 @@ async def reg_city(msg: Message, state: FSMContext):
     u = get_user(msg.from_user.id)
     u.city = city
     save_user(u)
-       await msg.answer(
+    await msg.answer(
         "🌟 <b>Требование к напарнику</b>\n"
         "Напиши, кого бы ты хотел найти (до 200 символов)."
     )
@@ -3193,6 +3193,22 @@ async def reg_city(msg: Message, state: FSMContext):
 @dp.message(Reg.mayak)
 async def reg_mayak(msg: Message, state: FSMContext):
     text = (msg.text or "").strip()[:200]
+    if len(text) < 5 or contains_link(text):
+        await msg.answer("❌ Требование — 5–200 символов, без ссылок.")
+        return
+    u = get_user(msg.from_user.id)
+    u.mayak = text
+    save_user(u)
+    # Теги: 6 категорий по 6 тегов, выбираем по 1 в каждой
+    await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
+    await send_tag_question(msg, state)
+
+async def send_tag_question(msg_or_cb, state: FSMContext):
+    data = await state.get_data()
+    idx = data.get("tag_cat", 0)
+    if idx >= len(TAG_QUESTIONS):
+        # все категории пройдены → на границы
+        await state.update_data(rf_chosen=[])
     if len(text) < 5 or contains_link(text):
         await msg.answer("❌ Маяк — 5–200 символов, без ссылок.")
         return
