@@ -3225,44 +3225,6 @@ async def send_tag_question(msg_or_cb, state: FSMContext):
     else:
         await msg_or_cb.answer(text, reply_markup=kb)
 
-@dp.callback_query(F.data.startswith("tag_"), Reg.tags)
-async def cb_tag(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()
-    parts = cb.data.split("_")
-    data = await state.get_data()
-    idx = data.get("tag_cat", 0)
-    if parts[1] == "ok":
-        # сохранить выбранные и перейти дальше
-        chosen = data.get("tag_chosen", [])
-        if not chosen:
-            await cb.answer("Выбери хотя бы 1 тег", show_alert=True)
-            return
-        all_tags = data.get("all_tags", [])
-        q = TAG_QUESTIONS[idx]
-        for tag_i in chosen:
-            all_tags.append((q["category"], q["tags"][tag_i]))
-        with SessionLocal() as s:
-            s.query(UserTag).filter_by(user_id=cb.from_user.id).delete()
-            for cat, tag in all_tags:
-                s.add(UserTag(user_id=cb.from_user.id, category=cat, tag=tag))
-            s.commit()
-        await state.update_data(
-            tag_cat=idx + 1,
-            tag_chosen=[],
-            all_tags=all_tags,
-        )
-        await send_tag_question(cb, state)
-        return
-    # toggle tag
-    i = int(parts[1]) if parts[1] != "ok" else -1
-    # parts: ["tag", "<i>", "<idx>"] для toggle, ["tag", "ok", "<idx>"] для ok
-    if len(parts) == 3 and parts[1] != "ok":
-        tag_i = int(parts[1])
-    else:
-        tag_i = -1
-    # упростим: используем отдельный формат
-    return
-
 # Упрощённая обработка тегов (актуальная)
 @dp.callback_query(F.data.regexp(r"^tag_\d+_\d+$"), Reg.tags)
 async def cb_tag_toggle(cb: CallbackQuery, state: FSMContext):
