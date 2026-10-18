@@ -179,6 +179,7 @@ class Partnership(Base):
 # Создаём таблицы
 
 Base.metadata.create_all(engine)
+# Base.metadata.drop_all(engine)
 
 # НА ОДИН ЗАПУСК (когда меняется схема БД). Потом убрать:
 # Base.metadata.drop_all(engine)
