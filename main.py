@@ -1510,3 +1510,28 @@ DUNGEONS["volcano"] = {
     "flag_question": 1, "flag_options": ["Отступлю", "Вместе или никто", "Обойду"],
     "flag_effects": {"0": {"target_question": 7, "add_text": "«Мудро. Но без славы»."}, "1": {"target_question": 7, "add_text": "«Достойно»."}, "2": {"target_question": 7, "add_text": "«Хитро. И одиноко»."}}
 }
+# ========== ВЕБ-СЕРВЕР И ЗАПУСК ==========
+async def health_check(request):
+    return web.Response(text="Bot is alive!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logging.info(f"Web server started on port {port}")
+
+async def main():
+    logging.info("Бот запускается…")
+    asyncio.create_task(start_web_server())
+    asyncio.create_task(timeout_worker())
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Бот остановлен")
