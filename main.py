@@ -3198,9 +3198,8 @@ async def reg_mayak(msg: Message, state: FSMContext):
     u.mayak = text
     save_user(u)
     await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
-    await send_tag_question(msg, state)
-async def send_tag_question(msg_or_cb, state: FSMContext):
-        data = await state.get_data()
+    async def send_tag_question(msg_or_cb, state: FSMContext):
+    data = await state.get_data()
     idx = data.get("tag_cat", 0)
     if idx >= len(TAG_QUESTIONS):
         await state.update_data(rf_chosen=[])
@@ -3211,9 +3210,9 @@ async def send_tag_question(msg_or_cb, state: FSMContext):
             await msg_or_cb.answer(text, reply_markup=kb_red_flags(set()))
         await state.set_state(Reg.red_flags)
         return
-    
+
     q = TAG_QUESTIONS[idx]
-    text = f"🏷 <b>Теги • {idx+1}/{len(TAG_QUESTIONS)}</b>\n\n{q['question']}\n\nВыбери 1 тег:"
+    text = f"🏷 <b>Теги · {idx+1}/{len(TAG_QUESTIONS)}</b>\n\n{q['question']}\n\nВыбери 1 тег:"
     kb = kb_tags(idx, q["tags"], set(data.get("tag_chosen", [])))
     if isinstance(msg_or_cb, CallbackQuery):
         await msg_or_cb.message.edit_text(text, reply_markup=kb)
