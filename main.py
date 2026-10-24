@@ -125,8 +125,8 @@ class Partnership(Base):
     games_count = Column(Integer, default=0)
     last_played_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-Base.metadata.drop_all(engine)
-Base.metadata.create_all(engine)
+#Base.metadata.drop_all(engine)
+#Base.metadata.create_all(engine)
 
 # ========== УТИЛИТЫ ==========
 def calculate_level(exp):
