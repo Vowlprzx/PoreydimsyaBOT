@@ -855,12 +855,23 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
         else:
             await target.answer(text, reply_markup=kb)
         QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
-       
+
+
+@dp.callback_query(F.data.startswith("quiz_"))
+async def cb_quiz(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    _, q_s, opt_s = cb.data.split("_")
+    q_i, opt_i = int(q_s), int(opt_s)
+    st = QUIZ_SCORES.get(cb.from_user.id)
+    
+    if not st or st["idx"] != q_i:
+        await cb.answer("Устарело, начни заново", show_alert=True)
+        return
+        
     scores = st["scores"]
     cls = QUIZ[q_i]["options"][opt_i][1]
     scores[cls] = scores.get(cls, 0) + 1
     
-    # ПЕРЕДАЕМ STATE ДАЛЬШЕ
     await send_quiz_question(cb, q_i + 1, scores, state)
     # ========== ПОИСК НАПАРНИКА ==========
 @dp.callback_query(F.data == "menu_search")
