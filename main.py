@@ -1528,7 +1528,7 @@ async def main():
     logging.info("Бот запускается…")
     asyncio.create_task(start_web_server())
     asyncio.create_task(timeout_worker())
-    await dp.start_polling(bot, handle_signals=False)
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
