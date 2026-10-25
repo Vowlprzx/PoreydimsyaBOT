@@ -870,11 +870,7 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
         else:
             await target.answer(text, reply_markup=kb)
         QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
-    
-    if not st or st["idx"] != q_i:
-        await cb.answer("Устарело, начни заново", show_alert=True)
-        return
-        
+       
     scores = st["scores"]
     cls = QUIZ[q_i]["options"][opt_i][1]
     scores[cls] = scores.get(cls, 0) + 1
