@@ -856,8 +856,6 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
         else:
             await target.answer(text)
         QUIZ_SCORES.pop(_uid, None)
-        
-        # ПЕРЕХОДИМ К ТЕГАМ
         await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
         await send_tag_question(target, state)
         return
@@ -868,7 +866,6 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
         [InlineKeyboardButton(text=opt_text[:60], callback_data=f"quiz_{q_idx}_{i}")]
         for i, (opt_text, cls) in enumerate(q["options"])
     ])
-    
     if isinstance(target, CallbackQuery):
         await target.message.edit_text(text, reply_markup=kb)
     else:
