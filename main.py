@@ -719,23 +719,7 @@ async def send_tag_question(msg_or_cb, state: FSMContext):
     else:
         await msg_or_cb.answer(text, reply_markup=kb)
 
-@dp.callback_query(F.data.regexp(r"^tag_\d+_\d+$"), Reg.tags)
-@dp.callback_query(F.data.startswith("tag_") & ~F.data.startswith("tag_ok_"), Reg.tags)
-async def cb_tag_toggle(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()
-    _, cat_s, tag_s = cb.data.split("_")
-    cat_i, tag_i = int(cat_s), int(tag_s)
-    data = await state.get_data()
-    chosen = set(data.get("tag_chosen", []))
-    if tag_i in chosen:
-        chosen.discard(tag_i)
-    else:
-        chosen = {tag_i}
-    await state.update_data(tag_chosen=list(chosen))
-    q = TAG_QUESTIONS[cat_i]
-    await cb.message.edit_reply_markup(reply_markup=kb_tags(cat_i, q["tags"], chosen))
-
-@dp.callback_query(F.data.startswith("tag_") & ~F.data.startswith("tag_ok_"), Reg.tags)
+@dp.callback_query(F.data.startswith("tag_") & ~F.data.startswith("tag_ok_"))
 async def cb_tag_toggle(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     _, cat_s, tag_s = cb.data.split("_")
@@ -751,7 +735,7 @@ async def cb_tag_toggle(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_reply_markup(reply_markup=kb_tags(cat_i, q["tags"], chosen))
 
 
-@dp.callback_query(F.data.startswith("tag_ok_"), Reg.tags)
+@dp.callback_query(F.data.startswith("tag_ok_"))
 async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     cat_idx = int(cb.data.split("_")[-1])
@@ -761,6 +745,33 @@ async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
     if not chosen:
         await cb.answer("Выбери хотя бы 1 тег", show_alert=True)
         return
+        
+    all_tags = data.get("all_tags", [])
+    q = TAG_QUESTIONS[cat_idx]
+    for tag_i in chosen:
+        all_tags.append((q["category"], q["tags"][tag_i]))
+        
+    with SessionLocal() as s:
+        s.query(UserTag).filter_by(user_id=cb.from_user.id).delete()
+        for cat, tag in all_tags:
+            s.add(UserTag(user_id=cb.from_user.id, category=cat, tag=tag))
+        s.commit()
+        
+    # Если это была последняя категория
+    if cat_idx + 1 >= len(TAG_QUESTIONS):
+        if data.get("is_editing"):
+            await state.clear()
+            u = get_user(cb.from_user.id)
+            await cb.message.edit_text("✅ Теги обновлены!", reply_markup=kb_main())
+            await cb.message.answer(render_profile(u), reply_markup=kb_profile())
+            return
+            
+    await state.update_data(
+        tag_cat=cat_idx + 1,
+        tag_chosen=[],
+        all_tags=all_tags,
+    )
+    await send_tag_question(cb, state)
         
     all_tags = data.get("all_tags", [])
     q = TAG_QUESTIONS[cat_idx]
