@@ -125,8 +125,8 @@ class Partnership(Base):
     games_count = Column(Integer, default=0)
     last_played_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-#Base.metadata.drop_all(engine)
-#Base.metadata.create_all(engine)
+Base.metadata.drop_all(engine)
+Base.metadata.create_all(engine)
 
 # ========== УТИЛИТЫ ==========
 def calculate_level(exp):
@@ -845,19 +845,19 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
     if q_idx >= len(QUIZ):
         cls_name, cls_desc = get_hybrid_class(scores)
         u = get_user(_uid)
-        if not u:
+        if u:
+            u.class_name = cls_name
+            save_user(u)
+            text = f"🎉 Твой класс: <b>{cls_name}</b>\n\n{cls_desc}\n\nТеперь выбери свои интересы (теги)."
+            if isinstance(target, CallbackQuery):
+                await target.message.edit_text(text)
+            else:
+                await target.answer(text)
             QUIZ_SCORES.pop(_uid, None)
-            return
-        u.class_name = cls_name
-        save_user(u)
-        text = f"🎉 Твой класс: <b>{cls_name}</b>\n\n{cls_desc}\n\nТеперь выбери свои интересы (теги)."
-        if isinstance(target, CallbackQuery):
-            await target.message.edit_text(text)
+            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
+            await send_tag_question(target, state)
         else:
-            await target.answer(text)
-        QUIZ_SCORES.pop(_uid, None)
-        await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
-        await send_tag_question(target, state)
+            QUIZ_SCORES.pop(_uid, None)
     else:
         q = QUIZ[q_idx]
         text = f"🎯 <b>Вопрос {q_idx+1}/{len(QUIZ)}</b>\n\n{q['text']}"
@@ -870,13 +870,6 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
         else:
             await target.answer(text, reply_markup=kb)
         QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
-
-@dp.callback_query(F.data.startswith("quiz_"))
-async def cb_quiz(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()
-    _, q_s, opt_s = cb.data.split("_")
-    q_i, opt_i = int(q_s), int(opt_s)
-    st = QUIZ_SCORES.get(cb.from_user.id)
     
     if not st or st["idx"] != q_i:
         await cb.answer("Устарело, начни заново", show_alert=True)
