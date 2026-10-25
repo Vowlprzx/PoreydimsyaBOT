@@ -366,7 +366,7 @@ def kb_edit():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Ник", callback_data="edit_nickname"), InlineKeyboardButton(text="Возраст", callback_data="edit_age")],
         [InlineKeyboardButton(text="Город", callback_data="edit_city"), InlineKeyboardButton(text="Требование", callback_data="edit_mayak")],
-        [InlineKeyboardButton(text="Рэд флаги", callback_data="edit_borders")],
+        [InlineKeyboardButton(text="Теги", callback_data="edit_tags"), InlineKeyboardButton(text="Рэд флаги", callback_data="edit_borders")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_profile")],
     ])
 
@@ -605,17 +605,25 @@ async def cb_edit(cb: CallbackQuery):
     await cb.message.edit_text("✏️ Что меняем?", reply_markup=kb_edit())
 
 @dp.callback_query(F.data.startswith("edit_"))
+@dp.callback_query(F.data.startswith("edit_"))
 async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     field = cb.data.split("_", 1)[1]
+    
+    if field == "tags":
+        await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=True)
+        await send_tag_question(cb, state)
+        return
+        
     if field == "borders":
-        await state.update_data(rf_chosen=[])
+        await state.update_data(rf_chosen=[], is_editing=True)
         await cb.message.edit_text(
             "🚩 <b>Рэд флаги</b>\n\nВыбери до 2:",
             reply_markup=kb_red_flags(set()),
         )
         await state.set_state(Reg.red_flags)
         return
+        
     await state.update_data(edit_field=field)
     prompts = {
         "nickname": "Новый ник (2–20 символов):",
@@ -727,6 +735,7 @@ async def cb_tag_toggle(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_reply_markup(reply_markup=kb_tags(cat_i, q["tags"], chosen))
 
 @dp.callback_query(F.data.regexp(r"^tag_ok_\d+$"), Reg.tags)
+@dp.callback_query(F.data.regexp(r"^tag_ok_\d+$"), Reg.tags)
 async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     cat_idx = int(cb.data.split("_")[-1])
@@ -748,6 +757,15 @@ async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
             s.add(UserTag(user_id=cb.from_user.id, category=cat, tag=tag))
         s.commit()
         
+    # Если это была последняя категория
+    if cat_idx + 1 >= len(TAG_QUESTIONS):
+        if data.get("is_editing"):
+            await state.clear()
+            u = get_user(cb.from_user.id)
+            await cb.message.edit_text("✅ Теги обновлены!", reply_markup=kb_main())
+            await cb.message.answer(render_profile(u), reply_markup=kb_profile())
+            return
+            
     await state.update_data(
         tag_cat=cat_idx + 1,
         tag_chosen=[],
@@ -773,15 +791,23 @@ async def cb_rf_toggle(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_reply_markup(reply_markup=kb_red_flags(chosen))
 
 @dp.callback_query(F.data == "rf_ok", Reg.red_flags)
+@dp.callback_query(F.data == "rf_ok", Reg.red_flags)
 async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     data = await state.get_data()
     chosen = data.get("rf_chosen", [])
+    is_editing = data.get("is_editing", False)
+    
     u = get_user(cb.from_user.id)
     set_red_flags(u, [RED_FLAGS[i] for i in chosen])
     await state.clear()
-    await cb.message.edit_text("🎯 Последний шаг — короткий квиз на класс (5 вопросов).")
-    await send_quiz_question(cb, 0, {c: 0 for c in ALL_BASE_CLASSES})
+    
+    if is_editing:
+        await cb.message.edit_text("✅ Рэд флаги обновлены!", reply_markup=kb_main())
+        await cb.message.answer(render_profile(u), reply_markup=kb_profile())
+    else:
+        await cb.message.edit_text("🎯 Последний шаг — короткий квиз на класс (5 вопросов).")
+        await send_quiz_question(cb, 0, {c: 0 for c in ALL_BASE_CLASSES})
 
 # ========== КВИЗ ==========
 QUIZ_SCORES = {}
