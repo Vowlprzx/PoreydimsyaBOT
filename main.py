@@ -541,8 +541,10 @@ async def reg_mayak(msg: Message, state: FSMContext):
     u = get_user(msg.from_user.id)
     u.mayak = text
     save_user(u)
-    await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
-    await send_tag_question(msg, state)
+    
+    # ЗАПУСКАЕМ КВИЗ СРАЗУ ПОСЛЕ ТРЕБОВАНИЯ
+    await msg.answer("🎯 Отлично! Теперь короткий квиз на класс (5 вопросов).")
+    await send_quiz_question(msg, 0, {c: 0 for c in ALL_BASE_CLASSES}, state)
 
 # ========== МЕНЮ ПРОФИЛЯ ==========
 @dp.callback_query(F.data == "menu_profile")
@@ -748,8 +750,12 @@ async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
         
     all_tags = data.get("all_tags", [])
     q = TAG_QUESTIONS[cat_idx]
+    cat_name = q["category"]
+    
+    # Удаляем старый тег этой категории, чтобы не было дублей
+    all_tags = [t for t in all_tags if t[0] != cat_name]
     for tag_i in chosen:
-        all_tags.append((q["category"], q["tags"][tag_i]))
+        all_tags.append((cat_name, q["tags"][tag_i]))
         
     with SessionLocal() as s:
         s.query(UserTag).filter_by(user_id=cb.from_user.id).delete()
@@ -757,7 +763,6 @@ async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
             s.add(UserTag(user_id=cb.from_user.id, category=cat, tag=tag))
         s.commit()
         
-    # Если это была последняя категория
     if cat_idx + 1 >= len(TAG_QUESTIONS):
         if data.get("is_editing"):
             await state.clear()
@@ -772,25 +777,6 @@ async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
         all_tags=all_tags,
     )
     await send_tag_question(cb, state)
-        
-    all_tags = data.get("all_tags", [])
-    q = TAG_QUESTIONS[cat_idx]
-    for tag_i in chosen:
-        all_tags.append((q["category"], q["tags"][tag_i]))
-        
-    with SessionLocal() as s:
-        s.query(UserTag).filter_by(user_id=cb.from_user.id).delete()
-        for cat, tag in all_tags:
-            s.add(UserTag(user_id=cb.from_user.id, category=cat, tag=tag))
-        s.commit()
-        
-    # Если это была последняя категория
-    if cat_idx + 1 >= len(TAG_QUESTIONS):
-        if data.get("is_editing"):
-            await state.clear()
-            u = get_user(cb.from_user.id)
-            await cb.message.edit_text("✅ Теги обновлены!", reply_markup=kb_main())
-            await cb.message.answer(render_profile(u), reply_markup=kb_profile())
             return
             
     await state.update_data(
@@ -825,7 +811,6 @@ async def cb_rf_toggle(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_reply_markup(reply_markup=kb_red_flags(chosen))
 
 @dp.callback_query(F.data == "rf_ok", Reg.red_flags)
-@dp.callback_query(F.data == "rf_ok", Reg.red_flags)
 async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     data = await state.get_data()
@@ -840,10 +825,9 @@ async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
         await cb.message.edit_text("✅ Рэд флаги обновлены!", reply_markup=kb_main())
         await cb.message.answer(render_profile(u), reply_markup=kb_profile())
     else:
-        await cb.message.edit_text("🎯 Последний шаг — короткий квиз на класс (5 вопросов).")
-        await send_quiz_question(cb, 0, {c: 0 for c in ALL_BASE_CLASSES})
+        await cb.message.edit_text("🎉 Регистрация завершена! Открываю профиль...")
+        await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
 
-# ========== КВИЗ ==========
 QUIZ_SCORES = {}
 
 def _uid_from(target) -> int:
@@ -853,10 +837,11 @@ def _uid_from(target) -> int:
         return target.from_user.id
     return target.chat.id
 
-async def send_quiz_question(target, q_idx: int, scores: dict = None):
+async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSMContext = None):
     _uid = _uid_from(target)
     if scores is None:
         scores = {c: 0 for c in ALL_BASE_CLASSES}
+        
     if q_idx >= len(QUIZ):
         cls_name, cls_desc = get_hybrid_class(scores)
         u = get_user(_uid)
@@ -865,14 +850,16 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None):
             return
         u.class_name = cls_name
         save_user(u)
-        text = f"🎉 Твой класс: <b>{cls_name}</b>\n\n{cls_desc}\n\nРегистрация завершена! Открываю профиль…"
+        text = f"🎉 Твой класс: <b>{cls_name}</b>\n\n{cls_desc}\n\nТеперь выбери свои интересы (теги)."
         if isinstance(target, CallbackQuery):
             await target.message.edit_text(text)
         else:
             await target.answer(text)
         QUIZ_SCORES.pop(_uid, None)
-        u = get_user(_uid)
-        await bot.send_message(_uid, render_profile(u), reply_markup=kb_main())
+        
+        # ПЕРЕХОДИМ К ТЕГАМ
+        await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
+        await send_tag_question(target, state)
         return
 
     q = QUIZ[q_idx]
@@ -881,6 +868,7 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None):
         [InlineKeyboardButton(text=opt_text[:60], callback_data=f"quiz_{q_idx}_{i}")]
         for i, (opt_text, cls) in enumerate(q["options"])
     ])
+    
     if isinstance(target, CallbackQuery):
         await target.message.edit_text(text, reply_markup=kb)
     else:
@@ -888,7 +876,7 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None):
 
     QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
 
-@dp.callback_query(F.data.regexp(r"^quiz_\d+_\d+$"))
+@dp.callback_query(F.data.startswith("quiz_"))
 async def cb_quiz(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     _, q_s, opt_s = cb.data.split("_")
@@ -902,7 +890,9 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
     scores = st["scores"]
     cls = QUIZ[q_i]["options"][opt_i][1]
     scores[cls] = scores.get(cls, 0) + 1
-    await send_quiz_question(cb, q_i + 1, scores)
+    
+    # ПЕРЕДАЕМ STATE ДАЛЬШЕ
+    await send_quiz_question(cb, q_i + 1, scores, state)
     # ========== ПОИСК НАПАРНИКА ==========
 @dp.callback_query(F.data == "menu_search")
 # ========== ПОИСК НАПАРНИКА (КАСКАДНЫЙ) ==========
