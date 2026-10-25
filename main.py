@@ -738,7 +738,6 @@ async def cb_tag_toggle(cb: CallbackQuery, state: FSMContext):
 
 
 @dp.callback_query(F.data.startswith("tag_ok_"))
-@dp.callback_query(F.data.startswith("tag_ok_"))
 async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     cat_idx = int(cb.data.split("_")[-1])
@@ -749,19 +748,15 @@ async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
         await cb.answer("Выбери хотя бы 1 тег", show_alert=True)
         return
         
-    all_tags = data.get("all_tags", [])
     q = TAG_QUESTIONS[cat_idx]
     cat_name = q["category"]
     
-    # Удаляем старый тег этой категории, чтобы не было дублей
-    all_tags = [t for t in all_tags if t[0] != cat_name]
-    for tag_i in chosen:
-        all_tags.append((cat_name, q["tags"][tag_i]))
-        
     with SessionLocal() as s:
-        s.query(UserTag).filter_by(user_id=cb.from_user.id).delete()
-        for cat, tag in all_tags:
-            s.add(UserTag(user_id=cb.from_user.id, category=cat, tag=tag))
+        # Удаляем старый тег этой категории из базы (чтобы не было дублей)
+        s.query(UserTag).filter_by(user_id=cb.from_user.id, category=cat_name).delete()
+        # Записываем новый
+        for tag_i in chosen:
+            s.add(UserTag(user_id=cb.from_user.id, category=cat_name, tag=q["tags"][tag_i]))
         s.commit()
         
     # Если это последняя категория и мы в режиме редактирования
@@ -773,7 +768,7 @@ async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
         return
         
     # Иначе идем дальше
-    await state.update_data(tag_cat=cat_idx + 1, tag_chosen=[], all_tags=all_tags)
+    await state.update_data(tag_cat=cat_idx + 1, tag_chosen=[])
     await send_tag_question(cb, state)
 
 # ========== РЭД ФЛАГИ ==========
