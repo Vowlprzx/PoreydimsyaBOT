@@ -858,20 +858,18 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
         QUIZ_SCORES.pop(_uid, None)
         await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
         await send_tag_question(target, state)
-        return
-
-    q = QUIZ[q_idx]
-    text = f"🎯 <b>Вопрос {q_idx+1}/{len(QUIZ)}</b>\n\n{q['text']}"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=opt_text[:60], callback_data=f"quiz_{q_idx}_{i}")]
-        for i, (opt_text, cls) in enumerate(q["options"])
-    ])
-    if isinstance(target, CallbackQuery):
-        await target.message.edit_text(text, reply_markup=kb)
     else:
-        await target.answer(text, reply_markup=kb)
-
-    QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
+        q = QUIZ[q_idx]
+        text = f"🎯 <b>Вопрос {q_idx+1}/{len(QUIZ)}</b>\n\n{q['text']}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=opt_text[:60], callback_data=f"quiz_{q_idx}_{i}")]
+            for i, (opt_text, cls) in enumerate(q["options"])
+        ])
+        if isinstance(target, CallbackQuery):
+            await target.message.edit_text(text, reply_markup=kb)
+        else:
+            await target.answer(text, reply_markup=kb)
+        QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
 
 @dp.callback_query(F.data.startswith("quiz_"))
 async def cb_quiz(cb: CallbackQuery, state: FSMContext):
