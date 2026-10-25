@@ -698,7 +698,7 @@ async def send_tag_question(msg_or_cb, state: FSMContext):
             await msg_or_cb.answer(text, reply_markup=kb_red_flags(set()))
         await state.set_state(Reg.red_flags)
         return
-    
+        await state.set_state(Reg.tags)
     q = TAG_QUESTIONS[idx]
     text = f"🏷 <b>Теги · {idx+1}/{len(TAG_QUESTIONS)}</b>\n\n{q['question']}\n\nВыбери 1 тег:"
     kb = kb_tags(idx, q["tags"], set(data.get("tag_chosen", [])))
