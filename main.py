@@ -125,8 +125,8 @@ class Partnership(Base):
     games_count = Column(Integer, default=0)
     last_played_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-#Base.metadata.drop_all(engine)
-#Base.metadata.create_all(engine)
+Base.metadata.drop_all(engine)
+Base.metadata.create_all(engine)
 
 # ========== УТИЛИТЫ ==========
 def calculate_level(exp):
@@ -367,6 +367,7 @@ def kb_edit():
         [InlineKeyboardButton(text="Ник", callback_data="edit_nickname"), InlineKeyboardButton(text="Возраст", callback_data="edit_age")],
         [InlineKeyboardButton(text="Город", callback_data="edit_city"), InlineKeyboardButton(text="Требование", callback_data="edit_mayak")],
         [InlineKeyboardButton(text="Теги", callback_data="edit_tags"), InlineKeyboardButton(text="Рэд флаги", callback_data="edit_borders")],
+        [InlineKeyboardButton(text="🎯 Пройти квиз на класс", callback_data="edit_quiz")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_profile")],
     ])
 
@@ -421,7 +422,8 @@ def set_red_flags(u: User, items):
     save_user(u)
 
 def is_user_ready_full(u: User) -> bool:
-    return bool(u and u.class_name and u.age and u.city and u.mayak)
+    # Проверяем, что класс не дефолтный "Странник"
+    return bool(u and u.class_name and u.class_name != "🎭 Странник" and u.age and u.city and u.mayak)
 
 def render_profile(u: User) -> str:
     lvl = calculate_level(u.experience)
@@ -607,11 +609,16 @@ async def cb_edit(cb: CallbackQuery):
     await cb.message.edit_text("✏️ Что меняем?", reply_markup=kb_edit())
 
 @dp.callback_query(F.data.startswith("edit_"))
-@dp.callback_query(F.data.startswith("edit_"))
 async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     field = cb.data.split("_", 1)[1]
     
+    if field == "quiz":
+        await state.update_data(is_editing=True)
+        await cb.message.edit_text("🎯 Запускаю квиз на класс (5 вопросов).")
+        await send_quiz_question(cb, 0, {c: 0 for c in ALL_BASE_CLASSES}, state)
+        return
+
     if field == "tags":
         await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=True)
         await send_tag_question(cb, state)
