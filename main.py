@@ -738,6 +738,7 @@ async def cb_tag_toggle(cb: CallbackQuery, state: FSMContext):
 
 
 @dp.callback_query(F.data.startswith("tag_ok_"))
+@dp.callback_query(F.data.startswith("tag_ok_"))
 async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     cat_idx = int(cb.data.split("_")[-1])
@@ -763,34 +764,16 @@ async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
             s.add(UserTag(user_id=cb.from_user.id, category=cat, tag=tag))
         s.commit()
         
-    if cat_idx + 1 >= len(TAG_QUESTIONS):
-        if data.get("is_editing"):
-            await state.clear()
-            u = get_user(cb.from_user.id)
-            await cb.message.edit_text("✅ Теги обновлены!", reply_markup=kb_main())
-            await cb.message.answer(render_profile(u), reply_markup=kb_profile())
-            return
-            
-    await state.update_data(
-        tag_cat=cat_idx + 1,
-        tag_chosen=[],
-        all_tags=all_tags,
-    )
-    await send_tag_question(cb, state)
-            return
-            
-    await state.update_data(
-        tag_cat=cat_idx + 1,
-        tag_chosen=[],
-        all_tags=all_tags,
-    )
-    await send_tag_question(cb, state)
-            
-    await state.update_data(
-        tag_cat=cat_idx + 1,
-        tag_chosen=[],
-        all_tags=all_tags,
-    )
+    # Если это последняя категория и мы в режиме редактирования
+    if cat_idx + 1 >= len(TAG_QUESTIONS) and data.get("is_editing"):
+        await state.clear()
+        u = get_user(cb.from_user.id)
+        await cb.message.edit_text("✅ Теги обновлены!", reply_markup=kb_main())
+        await cb.message.answer(render_profile(u), reply_markup=kb_profile())
+        return
+        
+    # Иначе идем дальше
+    await state.update_data(tag_cat=cat_idx + 1, tag_chosen=[], all_tags=all_tags)
     await send_tag_question(cb, state)
 
 # ========== РЭД ФЛАГИ ==========
