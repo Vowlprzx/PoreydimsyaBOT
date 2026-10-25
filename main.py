@@ -350,6 +350,10 @@ def kb_main():
         [InlineKeyboardButton(text="❓ Помощь", callback_data="menu_help")],
     ])
 
+def kb_cancel_search():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отменить поиск", callback_data="menu_cancel_search")],
+    ])
 def kb_profile():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 Найти напарника", callback_data="menu_search")],
@@ -841,30 +845,148 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
     await send_quiz_question(cb, q_i + 1, scores)
     # ========== ПОИСК НАПАРНИКА ==========
 @dp.callback_query(F.data == "menu_search")
+# ========== ПОИСК НАПАРНИКА (КАСКАДНЫЙ) ==========
+@dp.callback_query(F.data == "menu_search")
 async def cb_search(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     u = get_user(cb.from_user.id)
     if not is_user_ready_full(u):
         await cb.message.edit_text("❌ Сначала заполни анкету (/start).", reply_markup=kb_main())
         return
-    with SessionLocal() as s:
-        my_tags = {t.tag for t in s.query(UserTag).filter_by(user_id=u.tg_id).all()}
-        candidates = s.query(User).filter(
-            User.tg_id != u.tg_id,
-            User.status == "idle",
-            User.city == u.city,
-            User.age.between(u.age - 2, u.age + 2),
-            User.consent_given == True,
-        ).all()
-        partner = None
-        for c in candidates:
-            c_tags = {t.tag for t in s.query(UserTag).filter_by(user_id=c.tg_id).all()}
-            if my_tags & c_tags:
-                partner = c
-                break
-        if not partner:
-            await cb.message.edit_text("🔍 Пока никого не нашли. Попробуй позже — база растёт!", reply_markup=kb_main())
+
+    # Ставим статус "в поиске"
+    u.status = "searching"
+    save_user(u)
+    
+    msg = await cb.message.edit_text(
+        "🔍 <b>Ищем напарника...</b>\n\nСтрогий поиск (город, возраст, интересы). Ждём 10 секунд...",
+        reply_markup=kb_cancel_search()
+    )
+    
+    # Запускаем фоновую задачу поиска
+    asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
+
+async def search_process(tg_id: int, chat_id: int, msg_id: int):
+    try:
+        u = get_user(tg_id)
+        if not u or u.status != "searching":
             return
+
+        # ЭТАП 1: Строгий поиск (10 сек)
+        await asyncio.sleep(10)
+        partner = await find_partner(tg_id, strict=True, with_tags=True)
+        
+        # ЭТАП 2: Без тегов (ещё 10 сек)
+        if not partner:
+            u = get_user(tg_id) # обновляем данные
+            if u.status != "searching": return
+            try:
+                await bot.edit_message_text(
+                    "🔍 <b>Ищем напарника...</b>\n\nРасширяем поиск (город, возраст). Ждём ещё 10 секунд...",
+                    chat_id=chat_id, message_id=msg_id, reply_markup=kb_cancel_search()
+                )
+            except Exception: pass
+            await asyncio.sleep(10)
+            partner = await find_partner(tg_id, strict=True, with_tags=False)
+
+        # ЭТАП 3: Без возраста (ещё 10 сек)
+        if not partner:
+            u = get_user(tg_id)
+            if u.status != "searching": return
+            try:
+                await bot.edit_message_text(
+                    "🔍 <b>Ищем напарника...</b>\n\nРасширяем поиск (только город). Ждём ещё 10 секунд...",
+                    chat_id=chat_id, message_id=msg_id, reply_markup=kb_cancel_search()
+                )
+            except Exception: pass
+            await asyncio.sleep(10)
+            partner = await find_partner(tg_id, strict=False, with_tags=False)
+
+        # ЭТАП 4: Ищем всех подряд (ещё 10 сек)
+        if not partner:
+            u = get_user(tg_id)
+            if u.status != "searching": return
+            try:
+                await bot.edit_message_text(
+                    "🔍 <b>Ищем напарника...</b>\n\nИщем по всей базе. Последняя попытка...",
+                    chat_id=chat_id, message_id=msg_id, reply_markup=kb_cancel_search()
+                )
+            except Exception: pass
+            await asyncio.sleep(10)
+            partner = await find_anyone(tg_id)
+
+        # ИТОГ
+        u = get_user(tg_id)
+        if not u or u.status != "searching": return
+
+        if partner:
+            await start_dungeon_with(u, partner, chat_id, msg_id)
+        else:
+            u.status = "idle"
+            save_user(u)
+            try:
+                await bot.edit_message_text(
+                    "🔍 Пока никого не нашли. Попробуй позже — база растёт!",
+                    chat_id=chat_id, message_id=msg_id, reply_markup=kb_main()
+                )
+            except Exception: pass
+
+    except Exception as e:
+        logging.error(f"Ошибка в поиске: {e}")
+        u = get_user(tg_id)
+        if u and u.status == "searching":
+            u.status = "idle"
+            save_user(u)
+
+@dp.callback_query(F.data == "menu_cancel_search")
+async def cb_cancel_search(cb: CallbackQuery):
+    await cb.answer("Поиск отменен")
+    u = get_user(cb.from_user.id)
+    if u and u.status == "searching":
+        u.status = "idle"
+        save_user(u)
+    await cb.message.edit_text("Поиск отменен. Возвращайся в меню!", reply_markup=kb_main())
+
+# Хелперы для поиска
+async def find_partner(tg_id: int, strict: bool, with_tags: bool):
+    with SessionLocal() as s:
+        u = s.query(User).filter_by(tg_id=tg_id).first()
+        my_tags = {t.tag for t in s.query(UserTag).filter_by(user_id=tg_id).all()}
+        
+        query = s.query(User).filter(User.tg_id != tg_id, User.status == "idle", User.consent_given == True)
+        
+        if strict:
+            query = query.filter(User.city == u.city)
+            query = query.filter(User.age.between(u.age - 2, u.age + 2))
+            
+        candidates = query.all()
+        for c in candidates:
+            if with_tags:
+                c_tags = {t.tag for t in s.query(UserTag).filter_by(user_id=c.tg_id).all()}
+                if not (my_tags & c_tags):
+                    continue
+            return c
+    return None
+
+async def find_anyone(tg_id: int):
+    with SessionLocal() as s:
+        return s.query(User).filter(
+            User.tg_id != tg_id, 
+            User.status == "idle", 
+            User.consent_given == True
+        ).first()
+
+async def start_dungeon_with(u: User, partner: User, chat_id: int, msg_id: int):
+    with SessionLocal() as s:
+        # Перепроверяем, не занял ли его кто-то другой за эти миллисекунды
+        p_check = s.query(User).filter_by(tg_id=partner.tg_id).first()
+        if not p_check or p_check.status != "idle":
+            u = s.query(User).filter_by(tg_id=u.tg_id).first()
+            u.status = "idle"
+            s.commit()
+            await bot.edit_message_text("Напарник только что нашел другого. Попробуй поиск еще раз!", chat_id=chat_id, message_id=msg_id, reply_markup=kb_main())
+            return
+
         theme_key = random.choice(list(DUNGEONS.keys()))
         ds = DungeonSession(
             player1_tg_id=u.tg_id,
@@ -874,19 +996,21 @@ async def cb_search(cb: CallbackQuery, state: FSMContext):
         )
         s.add(ds)
         u.status = "dungeon"
-        partner.status = "dungeon"
+        p_check.status = "dungeon"
         u.partner_tg_id = partner.tg_id
-        partner.partner_tg_id = u.tg_id
+        p_check.partner_tg_id = u.tg_id
         s.commit()
         ds_id = ds.id
         p1_name = u.username
-        p2_name = partner.username
-    await cb.message.edit_text(f"🎉 Нашли напарника: <b>{p2_name}</b>!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…")
+        p2_name = p_check.username
+
     try:
+        await bot.edit_message_text(f"🎉 Нашли напарника: <b>{p2_name}</b>!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…", chat_id=chat_id, message_id=msg_id)
         await bot.send_message(partner.tg_id, f"🎉 Тебя выбрал(-а) <b>{p1_name}</b>!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…")
     except Exception:
         pass
     await send_dungeon_question(ds_id)
+   
 
 # ========== ДАНЖ ==========
 async def send_dungeon_question(ds_id: int):
