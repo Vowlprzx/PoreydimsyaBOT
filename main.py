@@ -14,6 +14,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.client.bot import DefaultBotProperties
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text, Boolean,
     DateTime, BigInteger, ForeignKey, func
@@ -876,7 +877,6 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
     # ========== ПОИСК НАПАРНИКА ==========
 @dp.callback_query(F.data == "menu_search")
 # ========== ПОИСК НАПАРНИКА (КАСКАДНЫЙ) ==========
-from aiogram.exceptions import TelegramBadRequest
 
 background_tasks = set()
 
