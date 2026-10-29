@@ -1677,31 +1677,19 @@ async def start_dungeon_with(u: User, partner: User, chat_id: int, msg_id: int):
         ds_id = ds.id
         p1_name = u_check.username
         p2_name = p_check.username
+        p1_id = u_check.tg_id
+        p2_id = p_check.tg_id
+
+    # Добавляем ссылку на аккаунт (tg://user)
+    link2 = f"<a href='tg://user?id={p2_id}'>{p2_name}</a>"
+    link1 = f"<a href='tg://user?id={p1_id}'>{p1_name}</a>"
 
     try:
-        await update_search_msg(chat_id, msg_id, f"🎉 Нашли напарника: <b>{p2_name}</b>!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…", None)
-        await bot.send_message(partner.tg_id, f"🎉 Тебя выбрал(-а) <b>{p1_name}</b>!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…")
+        await update_search_msg(chat_id, msg_id, f"🎉 Нашли напарника: {link2}!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…", None)
+        await bot.send_message(partner.tg_id, f"🎉 Тебя выбрал(-а) {link1}!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…")
     except Exception:
         pass
     await send_dungeon_question(ds_id)
-
-# ========== ДАНЖ ==========
-async def send_dungeon_question(ds_id: int):
-    with SessionLocal() as s:
-        ds = s.query(DungeonSession).get(ds_id)
-        if not ds or ds.status != "active":
-            return
-        theme = DUNGEONS[ds.theme_key]
-        phase = theme["phases"][ds.current_phase - 1]
-        if ds.current_question == 0:
-            intro = f"{phase['name']}\n\n{phase['intro']}"
-            for tg in (ds.player1_tg_id, ds.player2_tg_id):
-                try: await bot.send_message(tg, intro)
-                except Exception: pass
-        
-        q_list = phase["questions"]
-        if ds.current_question >= len(q_list):
-            await advance_phase(ds_id)
             return
             
         q = q_list[ds.current_question]
@@ -1747,15 +1735,15 @@ async def cb_answer(cb: CallbackQuery):
         ds.last_activity = datetime.datetime.utcnow()
         s.commit()
         
-        # Меняем текст сообщения на выбор игрока
+        # Убираем кнопки и пишем "Ждем"
         try:
-            await cb.message.edit_text(f"✅ Твой выбор: <b>{chosen_text}</b>\n\n⏳ Ждём выбора напарника...")
+            await cb.message.edit_text(f"✅ Твой выбор: <b>{chosen_text}</b>\n\n⏳ Ждём выбора напарника...", reply_markup=None)
         except Exception:
             pass
             
         if ds.player1_ready and ds.player2_ready:
             await resolve_question(ds.id, s)
-
+            
 async def resolve_question(ds_id: int, s):
     ds = s.query(DungeonSession).get(ds_id)
     theme = DUNGEONS[ds.theme_key]
@@ -1842,7 +1830,6 @@ async def catch_exchange(msg: Message, state: FSMContext):
     if ds:
         await state.set_state(Exchange.msg)
         await exchange_msg(msg, state)
-
 @dp.message(Exchange.msg)
 async def exchange_msg(msg: Message, state: FSMContext):
     text = (msg.text or "").strip()[:100]
@@ -1861,28 +1848,31 @@ async def exchange_msg(msg: Message, state: FSMContext):
             return
             
         is_p1 = ds.player1_tg_id == msg.from_user.id
-        if is_p1 and ds.player1_msg:
-            await state.clear()
-            return
-        if not is_p1 and ds.player2_msg:
-            await state.clear()
-            return
-            
-        if is_p1: ds.player1_msg = text
-        else: ds.player2_msg = text
-        
-        ds.msg_stage += 1
-        ds.last_activity = datetime.datetime.utcnow()
+        if is_p1:
+            ds.player1_msg = text
+        else:
+            ds.player2_msg = text
         s.commit()
-        other = ds.player2_tg_id if is_p1 else ds.player1_tg_id
         
+        p1_id = ds.player1_tg_id
+        p2_id = ds.player2_tg_id
+        p1_msg = ds.player1_msg
+        p2_msg = ds.player2_msg
+        ds_id = ds.id
+
+    # Сразу очищаем состояние, чтобы не было зависаний
     await state.clear() 
     
-    if ds.msg_stage >= 3:
-        try: await bot.send_message(other, f"💬 Сообщение от напарника:\n\n{text}")
-        except Exception: pass
-        await send_dungeon_question(ds.id)
+    if p1_msg and p2_msg:
+        # ОБА НАПИСАЛИ - ОТПРАВЛЯЕМ ДРУГ ДРУГУ И ИДЕМ ДАЛЬШЕ
+        try:
+            await bot.send_message(p1_id, f"💬 Сообщение от напарника:\n\n<b>{p2_msg}</b>")
+            await bot.send_message(p2_id, f"💬 Сообщение от напарника:\n\n<b>{p1_msg}</b>")
+        except Exception:
+            pass
+        await send_dungeon_question(ds_id)
     else:
+        # НАПИСАЛ ТОЛЬКО ОДИН
         await msg.answer("✅ Отправлено! Ждём ответ напарника.")
 
 # ========== ФИНАЛ ==========
