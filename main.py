@@ -1271,11 +1271,278 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
     scores[cls] = scores.get(cls, 0) + 1
     
     await send_quiz_question(cb, q_i + 1, scores, state) 
-    # ========== ПОИСК НАПАРНИКА ==========
+  # ========== ХЕЛПЕРЫ БД ==========
+def get_user(tg_id: int):
+    with SessionLocal() as s:
+        return s.query(User).filter_by(tg_id=tg_id).first()
 
-# ========== ПОИСК НАПАРНИКА (КАСКАДНЫЙ) ==========
-search_tasks = {}
+def save_user(u: User):
+    with SessionLocal() as s:
+        s.merge(u)
+        s.commit()
 
+def get_user_tags(tg_id: int):
+    with SessionLocal() as s:
+        return s.query(UserTag).filter_by(user_id=tg_id).all()
+
+def get_red_flags(u: User):
+    if not u.red_flags: return []
+    return [x for x in u.red_flags.split("|") if x]
+
+def set_red_flags(u: User, items):
+    u.red_flags = "|".join(items)
+    save_user(u)
+
+def is_user_ready_full(u: User) -> bool:
+    return bool(u and u.class_name and u.class_name != "🎭 Странник" and u.age and u.city and u.mayak)
+
+def render_profile(u: User) -> str:
+    lvl = calculate_level(u.experience)
+    cur, need = progress_to_next_level(u.experience)
+    bar = progress_bar(cur, need, 10)
+    tags = get_user_tags(u.tg_id)
+    tags_str = ", ".join(t.tag for t in tags[:8]) if tags else "—"
+    flags = get_red_flags(u)
+    flags_str = ", ".join(flags) if flags else "—"
+    pioneer = " 🏅 Первопроходец" if u.is_pioneer else ""
+    streak = u.daily_streak or 0
+    return (
+        f"🎭 <b>{u.username}</b>{pioneer}\n"
+        f"<b>{u.class_name}</b> · Уровень {lvl}\n"
+        f"{bar} {cur}/{need}\n\n"
+        f"📍 Город: {u.city or '—'}\n"
+        f"🎂 Возраст: {u.age or '—'}\n"
+        f"🌟 Требование к напарнику: {u.mayak or '—'}\n"
+        f"🚩 Рэд флаги: {flags_str}\n"
+        f"🏷 Теги: {tags_str}\n\n"
+        f"🎲 Рейдов пройдено: {u.full_dungeons}\n"
+        f"🔥 Стрик: {streak} дней"
+    )
+
+# ========== СТАРТ И РЕГИСТРАЦИЯ ==========
+@dp.message(Command("start"))
+async def cmd_start(msg: Message, state: FSMContext):
+    await state.clear()
+    u = get_user(msg.from_user.id)
+    if u and u.consent_given:
+        await msg.answer(f"👋 С возвращением, <b>{u.username}</b>!\n\n{render_profile(u)}", reply_markup=kb_main())
+        return
+    await msg.answer("👋 Привет! Это бот <b>«Порейдимся»</b> — знакомства в стиле RPG.\n\nПрежде чем начать, нужно согласие на обработку персональных данных (152-ФЗ).", reply_markup=kb_consent())
+    await state.set_state(Reg.consent)
+
+@dp.callback_query(F.data == "consent_yes", Reg.consent)
+async def cb_consent(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    with SessionLocal() as s:
+        u = s.query(User).filter_by(tg_id=cb.from_user.id).first()
+        if not u:
+            count = s.query(User).count()
+            u = User(tg_id=cb.from_user.id, username=cb.from_user.username or f"user_{cb.from_user.id}", class_name="🎭 Странник", consent_given=True, is_18plus=True, is_pioneer=(count < 1000))
+            s.add(u)
+        else:
+            u.consent_given = True
+        s.commit()
+    await cb.message.edit_text("✅ Согласие получено.\n\nКак тебя зовут? Введи ник (2–20 символов).")
+    await state.set_state(Reg.nickname)
+
+@dp.message(Reg.nickname)
+async def reg_nick(msg: Message, state: FSMContext):
+    nick = (msg.text or "").strip()
+    if not (2 <= len(nick) <= 20) or contains_link(nick):
+        await msg.answer("❌ Ник должен быть 2–20 символов, без ссылок и @.")
+        return
+    u = get_user(msg.from_user.id)
+    u.username = nick
+    save_user(u)
+    await msg.answer("Сколько тебе лет? (только число)")
+    await state.set_state(Reg.age)
+
+@dp.message(Reg.age)
+async def reg_age(msg: Message, state: FSMContext):
+    try:
+        age = int((msg.text or "").strip())
+        if not (18 <= age <= 99): raise ValueError
+    except ValueError:
+        await msg.answer("❌ Возраст от 18 до 99.")
+        return
+    u = get_user(msg.from_user.id)
+    u.age = age
+    save_user(u)
+    await msg.answer("Из какого ты города?")
+    await state.set_state(Reg.city)
+
+@dp.message(Reg.city)
+async def reg_city(msg: Message, state: FSMContext):
+    city = (msg.text or "").strip()[:100]
+    if len(city) < 2 or contains_link(city):
+        await msg.answer("❌ Название города — 2–100 символов, без ссылок.")
+        return
+    u = get_user(msg.from_user.id)
+    u.city = city
+    save_user(u)
+    await msg.answer("🌟 <b>Требование к напарнику</b>\nНапиши, кого бы ты хотел найти (до 200 символов).")
+    await state.set_state(Reg.mayak)
+
+@dp.message(Reg.mayak)
+async def reg_mayak(msg: Message, state: FSMContext):
+    text = (msg.text or "").strip()[:200]
+    if len(text) < 5 or contains_link(text):
+        await msg.answer("❌ Требование — 5–200 символов, без ссылок.")
+        return
+    u = get_user(msg.from_user.id)
+    u.mayak = text
+    save_user(u)
+    await msg.answer("🎯 Отлично! Теперь короткий квиз на класс (5 вопросов).")
+    await send_quiz_question(msg, 0, {c: 0 for c in ALL_BASE_CLASSES}, state)
+
+# ========== ТЕГИ И КВИЗ ==========
+async def send_tag_question(msg_or_cb, state: FSMContext):
+    data = await state.get_data()
+    idx = data.get("tag_cat", 0)
+    if idx >= len(TAG_QUESTIONS):
+        await state.update_data(rf_chosen=[])
+        text = "🚩 <b>Рэд флаги</b>\n\nОтметь до 2 пунктов — с чем точно не готов(-а) мириться в напарнике.\n3-й слот откроется на 5 уровне."
+        if isinstance(msg_or_cb, CallbackQuery):
+            await msg_or_cb.message.edit_text(text, reply_markup=kb_red_flags(set()))
+        else:
+            await msg_or_cb.answer(text, reply_markup=kb_red_flags(set()))
+        await state.set_state(Reg.red_flags)
+        return
+    
+    await state.set_state(Reg.tags)
+    q = TAG_QUESTIONS[idx]
+    text = f"🏷 <b>Теги · {idx+1}/{len(TAG_QUESTIONS)}</b>\n\n{q['question']}\n\nВыбери 1 тег:"
+    kb = kb_tags(idx, q["tags"], set(data.get("tag_chosen", [])))
+    if isinstance(msg_or_cb, CallbackQuery):
+        await msg_or_cb.message.edit_text(text, reply_markup=kb)
+    else:
+        await msg_or_cb.answer(text, reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("tag_") & ~F.data.startswith("tag_ok_"), Reg.tags)
+async def cb_tag_toggle(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    _, cat_s, tag_s = cb.data.split("_")
+    cat_i, tag_i = int(cat_s), int(tag_s)
+    data = await state.get_data()
+    chosen = set(data.get("tag_chosen", []))
+    if tag_i in chosen:
+        chosen.discard(tag_i)
+    else:
+        chosen = {tag_i}
+    await state.update_data(tag_chosen=list(chosen))
+    q = TAG_QUESTIONS[cat_i]
+    await cb.message.edit_reply_markup(reply_markup=kb_tags(cat_i, q["tags"], chosen))
+
+@dp.callback_query(F.data.startswith("tag_ok_"), Reg.tags)
+async def cb_tag_ok(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    cat_idx = int(cb.data.split("_")[-1])
+    data = await state.get_data()
+    chosen = data.get("tag_chosen", [])
+    
+    if not chosen:
+        await cb.answer("Выбери хотя бы 1 тег", show_alert=True)
+        return
+        
+    q = TAG_QUESTIONS[cat_idx]
+    cat_name = q["category"]
+    
+    with SessionLocal() as s:
+        s.query(UserTag).filter_by(user_id=cb.from_user.id, category=cat_name).delete()
+        for tag_i in chosen:
+            s.add(UserTag(user_id=cb.from_user.id, category=cat_name, tag=q["tags"][tag_i]))
+        s.commit()
+        
+    if cat_idx + 1 >= len(TAG_QUESTIONS) and data.get("is_editing"):
+        await state.clear()
+        u = get_user(cb.from_user.id)
+        await cb.message.edit_text("✅ Теги обновлены!", reply_markup=kb_main())
+        await cb.message.answer(render_profile(u), reply_markup=kb_profile())
+        return
+        
+    await state.update_data(tag_cat=cat_idx + 1, tag_chosen=[])
+    await send_tag_question(cb, state)
+
+@dp.callback_query(F.data.regexp(r"^rf_\d+$"), Reg.red_flags)
+async def cb_rf_toggle(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    i = int(cb.data.split("_")[1])
+    data = await state.get_data()
+    chosen = set(data.get("rf_chosen", []))
+    if i in chosen:
+        chosen.discard(i)
+    else:
+        if len(chosen) >= MAX_RED_FLAGS:
+            await cb.answer(f"Максимум {MAX_RED_FLAGS}", show_alert=True)
+            return
+        chosen.add(i)
+    await state.update_data(rf_chosen=list(chosen))
+    await cb.message.edit_reply_markup(reply_markup=kb_red_flags(chosen))
+
+@dp.callback_query(F.data == "rf_ok", Reg.red_flags)
+async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    data = await state.get_data()
+    chosen = data.get("rf_chosen", [])
+    is_editing = data.get("is_editing", False)
+    
+    u = get_user(cb.from_user.id)
+    set_red_flags(u, [RED_FLAGS[i] for i in chosen])
+    await state.clear()
+    
+    if is_editing:
+        await cb.message.edit_text("✅ Рэд флаги обновлены!", reply_markup=kb_main())
+        await cb.message.answer(render_profile(u), reply_markup=kb_profile())
+    else:
+        await cb.message.edit_text("🎉 Регистрация завершена! Открываю профиль...")
+        await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
+
+QUIZ_SCORES = {}
+def _uid_from(target) -> int:
+    if isinstance(target, CallbackQuery): return target.from_user.id
+    if target.from_user: return target.from_user.id
+    return target.chat.id
+
+async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSMContext = None):
+    _uid = _uid_from(target)
+    if scores is None: scores = {c: 0 for c in ALL_BASE_CLASSES}
+        
+    if q_idx >= len(QUIZ):
+        cls_name, cls_desc = get_hybrid_class(scores)
+        u = get_user(_uid)
+        if u:
+            u.class_name = cls_name
+            save_user(u)
+            text = f"🎉 Твой класс: <b>{cls_name}</b>\n\n{cls_desc}\n\nТеперь выбери свои интересы (теги)."
+            if isinstance(target, CallbackQuery): await target.message.edit_text(text)
+            else: await target.answer(text)
+            QUIZ_SCORES.pop(_uid, None)
+            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
+            await send_tag_question(target, state)
+        else:
+            QUIZ_SCORES.pop(_uid, None)
+    else:
+        q = QUIZ[q_idx]
+        text = f"🎯 <b>Вопрос {q_idx+1}/{len(QUIZ)}</b>\n\n{q['text']}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=opt[:60], callback_data=f"quiz_{q_idx}_{i}")] for i, (opt, _) in enumerate(q["options"])])
+        if isinstance(target, CallbackQuery): await target.message.edit_text(text, reply_markup=kb)
+        else: await target.answer(text, reply_markup=kb)
+        QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
+
+@dp.callback_query(F.data.startswith("quiz_"))
+async def cb_quiz(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    _, q_s, opt_s = cb.data.split("_")
+    q_i, opt_i = int(q_s), int(opt_s)
+    st = QUIZ_SCORES.get(cb.from_user.id)
+    if not st or st["idx"] != q_i:
+        await cb.answer("Устарело", show_alert=True)
+        return
+    scores = st["scores"]
+    cls = QUIZ[q_i]["options"][opt_i][1]
+    scores[cls] = scores.get(cls, 0) + 1
+    await send_quiz_question(cb, q_i + 1, scores, state)
+# ========== ПОИСК НАПАРНИКА ==========
 @dp.callback_query(F.data == "menu_search")
 async def cb_search(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
@@ -1292,21 +1559,13 @@ async def cb_search(cb: CallbackQuery, state: FSMContext):
         reply_markup=kb_cancel_search()
     )
     
-    # Отменяем старый поиск, если он был
-    if u.tg_id in search_tasks:
-        search_tasks[u.tg_id].cancel()
-        
-    task = asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
-    search_tasks[u.tg_id] = task
+    asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
 
 async def update_search_msg(chat_id, msg_id, text, markup):
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id, reply_markup=markup)
-    except TelegramBadRequest as e:
-        if "message is not modified" not in str(e):
-            logging.error(f"Ошибка обновления: {e}")
-    except Exception as e:
-        logging.error(f"Ошибка обновления: {e}")
+    except Exception:
+        pass
 
 async def search_process(tg_id: int, chat_id: int, msg_id: int):
     try:
@@ -1343,24 +1602,17 @@ async def search_process(tg_id: int, chat_id: int, msg_id: int):
             save_user(u)
             await update_search_msg(chat_id, msg_id, "🔍 Пока никого не нашли. Попробуй позже — база растёт!", kb_main())
 
-    except asyncio.CancelledError:
-        pass
     except Exception as e:
-        logging.error(f"Критическая ошибка в поиске: {e}", exc_info=True)
+        logging.error(f"Ошибка в поиске: {e}")
         u = get_user(tg_id)
         if u and u.status == "searching":
             u.status = "idle"
             save_user(u)
-            # Отправляем текст ошибки прямо в чат, чтобы мы её увидели
-            await update_search_msg(chat_id, msg_id, f"❌ Ошибка при поиске: <code>{e}</code>", kb_main())
-    finally:
-        search_tasks.pop(tg_id, None)
+            await update_search_msg(chat_id, msg_id, f"❌ Ошибка: {e}", kb_main())
 
 @dp.callback_query(F.data == "menu_cancel_search")
 async def cb_cancel_search(cb: CallbackQuery):
     await cb.answer("Поиск отменен")
-    if cb.from_user.id in search_tasks:
-        search_tasks[cb.from_user.id].cancel()
     u = get_user(cb.from_user.id)
     if u and u.status == "searching":
         u.status = "idle"
@@ -1431,12 +1683,7 @@ async def start_dungeon_with(u: User, partner: User, chat_id: int, msg_id: int):
         await bot.send_message(partner.tg_id, f"🎉 Тебя выбрал(-а) <b>{p1_name}</b>!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…")
     except Exception:
         pass
-        
-    try:
-        await send_dungeon_question(ds_id)
-    except Exception as e:
-        logging.error(f"Ошибка при старте подземелья: {e}", exc_info=True)
-   
+    await send_dungeon_question(ds_id)
 
 # ========== ДАНЖ ==========
 async def send_dungeon_question(ds_id: int):
@@ -1449,14 +1696,14 @@ async def send_dungeon_question(ds_id: int):
         if ds.current_question == 0:
             intro = f"{phase['name']}\n\n{phase['intro']}"
             for tg in (ds.player1_tg_id, ds.player2_tg_id):
-                try:
-                    await bot.send_message(tg, intro)
-                except Exception:
-                    pass
+                try: await bot.send_message(tg, intro)
+                except Exception: pass
+        
         q_list = phase["questions"]
         if ds.current_question >= len(q_list):
             await advance_phase(ds_id)
             return
+            
         q = q_list[ds.current_question]
         ds.player1_answer = None
         ds.player2_answer = None
@@ -1464,13 +1711,14 @@ async def send_dungeon_question(ds_id: int):
         ds.player2_ready = False
         ds.last_activity = datetime.datetime.utcnow()
         s.commit()
+        
         for tg in (ds.player1_tg_id, ds.player2_tg_id):
             try:
                 await bot.send_message(tg, q["text"], reply_markup=kb_question(q["options"]))
             except Exception:
                 pass
 
-@dp.callback_query(F.data.regexp(r"^q_\d+$"))
+@dp.callback_query(F.data.startswith("q_"))
 async def cb_answer(cb: CallbackQuery):
     await cb.answer()
     i = int(cb.data.split("_")[1])
@@ -1480,9 +1728,16 @@ async def cb_answer(cb: CallbackQuery):
             (DungeonSession.status == "active")
         ).first()
         if not ds: return
+        
         is_p1 = ds.player1_tg_id == cb.from_user.id
         if is_p1 and ds.player1_ready: return
         if (not is_p1) and ds.player2_ready: return
+        
+        theme = DUNGEONS[ds.theme_key]
+        phase = theme["phases"][ds.current_phase - 1]
+        q = phase["questions"][ds.current_question]
+        chosen_text = q["options"][i]["text"]
+        
         if is_p1:
             ds.player1_answer = i
             ds.player1_ready = True
@@ -1491,8 +1746,14 @@ async def cb_answer(cb: CallbackQuery):
             ds.player2_ready = True
         ds.last_activity = datetime.datetime.utcnow()
         s.commit()
+        
+        # Меняем текст сообщения на выбор игрока
+        try:
+            await cb.message.edit_text(f"✅ Твой выбор: <b>{chosen_text}</b>\n\n⏳ Ждём выбора напарника...")
+        except Exception:
+            pass
+            
         if ds.player1_ready and ds.player2_ready:
-            await cb.message.edit_reply_markup(reply_markup=None)
             await resolve_question(ds.id, s)
 
 async def resolve_question(ds_id: int, s):
@@ -1503,15 +1764,14 @@ async def resolve_question(ds_id: int, s):
     a1, a2 = ds.player1_answer, ds.player2_answer
     soft1 = q["options"][a1]["soft"]
     soft2 = q["options"][a2]["soft"]
+    
     if a1 == a2:
-        kind = "same"
-        match = 1
+        kind, match = "same", 1
     elif soft1 == soft2:
-        kind = "soft"
-        match = 1
+        kind, match = "soft", 1
     else:
-        kind = "mixed"
-        match = 0
+        kind, match = "mixed", 0
+        
     bridge = q["bridges"][kind]
     if ds.current_phase == 1: ds.phase1_matches += match
     elif ds.current_phase == 2: ds.phase2_matches += match
@@ -1519,29 +1779,30 @@ async def resolve_question(ds_id: int, s):
     
     if ds.current_question == theme.get("flag_question") and not ds.flag_early_choice:
         ds.flag_early_choice = str(a1)
+        
     flag_effects = theme.get("flag_effects", {})
     add_text = ""
     if ds.flag_early_choice in flag_effects:
         eff = flag_effects[ds.flag_early_choice]
         if eff["target_question"] == ds.current_question:
             add_text = "\n\n" + eff["add_text"]
+            
     ds.current_question += 1
     ds.last_activity = datetime.datetime.utcnow()
     s.commit()
+    
     for tg in (ds.player1_tg_id, ds.player2_tg_id):
-        try:
-            await bot.send_message(tg, bridge + add_text)
-        except Exception:
-            pass
+        try: await bot.send_message(tg, bridge + add_text)
+        except Exception: pass
+        
     if ds.current_phase == 2 and ds.current_question >= len(phase["questions"]):
         ds.msg_stage = 1
         s.commit()
         for tg in (ds.player1_tg_id, ds.player2_tg_id):
-            try:
-                await bot.send_message(tg, "💬 Теперь вы можете обменяться одним сообщением. Напиши что-нибудь напарнику (до 100 символов).")
-            except Exception:
-                pass
+            try: await bot.send_message(tg, "💬 Теперь вы можете обменяться одним сообщением. Напиши что-нибудь напарнику (до 100 символов).")
+            except Exception: pass
         return
+        
     if ds.current_question >= len(phase["questions"]):
         await advance_phase(ds_id, s)
     else:
@@ -1566,50 +1827,63 @@ async def advance_phase(ds_id: int, s=None):
     await send_dungeon_question(ds_id)
 
 # ========== ОБМЕН СООБЩЕНИЯМИ ==========
+@dp.message(F.text, ~F.text.startswith("/"))
+async def catch_exchange(msg: Message, state: FSMContext):
+    current = await state.get_state()
+    if current is not None: return
+    
+    with SessionLocal() as s:
+        ds = s.query(DungeonSession).filter(
+            ((DungeonSession.player1_tg_id == msg.from_user.id) | (DungeonSession.player2_tg_id == msg.from_user.id)) &
+            (DungeonSession.status == "active") &
+            (DungeonSession.msg_stage < 3)
+        ).first()
+        
+    if ds:
+        await state.set_state(Exchange.msg)
+        await exchange_msg(msg, state)
+
 @dp.message(Exchange.msg)
 async def exchange_msg(msg: Message, state: FSMContext):
     text = (msg.text or "").strip()[:100]
     if not text:
         await msg.answer("Напиши текст до 100 символов.")
         return
+        
     with SessionLocal() as s:
         ds = s.query(DungeonSession).filter(
             ((DungeonSession.player1_tg_id == msg.from_user.id) | (DungeonSession.player2_tg_id == msg.from_user.id)) &
             (DungeonSession.status == "active")
         ).first()
+        
         if not ds:
             await state.clear()
             return
+            
         is_p1 = ds.player1_tg_id == msg.from_user.id
+        if is_p1 and ds.player1_msg:
+            await state.clear()
+            return
+        if not is_p1 and ds.player2_msg:
+            await state.clear()
+            return
+            
         if is_p1: ds.player1_msg = text
         else: ds.player2_msg = text
+        
         ds.msg_stage += 1
         ds.last_activity = datetime.datetime.utcnow()
         s.commit()
-        if ds.msg_stage >= 3:
-            other = ds.player2_tg_id if is_p1 else ds.player1_tg_id
-            try:
-                await bot.send_message(other, f"💬 Сообщение от напарника:\n\n{text}")
-            except Exception:
-                pass
-            await state.clear()
-            await send_dungeon_question(ds.id)
-        else:
-            await msg.answer("✅ Отправлено! Ждём ответ напарника.")
-
-@dp.message(F.text, ~F.text.startswith("/"))
-async def catch_exchange(msg: Message, state: FSMContext):
-    current = await state.get_state()
-    if current is not None: return
-    with SessionLocal() as s:
-        ds = s.query(DungeonSession).filter(
-            ((DungeonSession.player1_tg_id == msg.from_user.id) | (DungeonSession.player2_tg_id == msg.from_user.id)) &
-            (DungeonSession.status == "active") &
-            (DungeonSession.msg_stage == 1)
-        ).first()
-    if ds:
-        await state.set_state(Exchange.msg)
-        await exchange_msg(msg, state)
+        other = ds.player2_tg_id if is_p1 else ds.player1_tg_id
+        
+    await state.clear() 
+    
+    if ds.msg_stage >= 3:
+        try: await bot.send_message(other, f"💬 Сообщение от напарника:\n\n{text}")
+        except Exception: pass
+        await send_dungeon_question(ds.id)
+    else:
+        await msg.answer("✅ Отправлено! Ждём ответ напарника.")
 
 # ========== ФИНАЛ ==========
 async def finish_dungeon(ds_id: int, s):
@@ -1632,10 +1906,8 @@ async def finish_dungeon(ds_id: int, s):
     s.commit()
     text = f"🏁 <b>Финал рейда</b>\n\n{verdict}\n{desc}\n\nСовпадений: {total}/11\n✨ +{reward} опыта"
     for tg in (ds.player1_tg_id, ds.player2_tg_id):
-        try:
-            await bot.send_message(tg, text, reply_markup=kb_after_dungeon())
-        except Exception:
-            pass
+        try: await bot.send_message(tg, text, reply_markup=kb_after_dungeon())
+        except Exception: pass
 
 # ========== ТАЙМАУТ ==========
 async def timeout_worker():
@@ -1654,10 +1926,8 @@ async def timeout_worker():
                             u.partner_tg_id = None
                     s.commit()
                     for tg in (ds.player1_tg_id, ds.player2_tg_id):
-                        try:
-                            await bot.send_message(tg, "⌛ Рейд прерван: слишком долго не было активности.", reply_markup=kb_main())
-                        except Exception:
-                            pass
+                        try: await bot.send_message(tg, "⌛ Рейд прерван: слишком долго не было активности.", reply_markup=kb_main())
+                        except Exception: pass
         except Exception as e:
             logging.error(f"timeout_worker: {e}")
 
@@ -1667,8 +1937,6 @@ async def health_check(request):
 
 async def main():
     logging.info("Бот запускается…")
-    
-    # Запускаем веб-сервер для Bothost напрямую в главном потоке
     app = web.Application()
     app.router.add_get('/', health_check)
     runner = web.AppRunner(app)
@@ -1678,10 +1946,7 @@ async def main():
     await site.start()
     logging.info(f"Web server started on port {port}")
 
-    # Запускаем фоновую задачу таймаута
     asyncio.create_task(timeout_worker())
-    
-    # Запускаем самого бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
