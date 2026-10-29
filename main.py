@@ -876,9 +876,8 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
     await send_quiz_question(cb, q_i + 1, scores, state) 
     # ========== ПОИСК НАПАРНИКА ==========
 @dp.callback_query(F.data == "menu_search")
-# ========== ПОИСК НАПАРНИКА (КАСКАДНЫЙ) ==========
 
-background_tasks = set()
+# ========== ПОИСК НАПАРНИКА (КАСКАДНЫЙ) ==========
 
 @dp.callback_query(F.data == "menu_search")
 async def cb_search(cb: CallbackQuery, state: FSMContext):
@@ -895,10 +894,7 @@ async def cb_search(cb: CallbackQuery, state: FSMContext):
         "🔍 <b>Ищем напарника...</b>\n\nСтрогий поиск (город, возраст, интересы). Ждём 10 секунд...",
         reply_markup=kb_cancel_search()
     )
-    
-    task = asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
-    background_tasks.add(task)
-    task.add_done_callback(background_tasks.discard)
+    asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
 
 async def update_search_msg(chat_id, msg_id, text, markup):
     try:
