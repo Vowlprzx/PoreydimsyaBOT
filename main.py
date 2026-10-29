@@ -3751,7 +3751,24 @@ async def start_dungeon_with(u: User, partner: User, chat_id: int, msg_id: int):
         await bot.send_message(partner.tg_id, f"🎉 Тебя выбрал(-а) {link1}!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…")
     except Exception:
         pass
-    await send_dungeon_question(ds_id)
+      await send_dungeon_question(ds_id)
+
+async def send_dungeon_question(ds_id: int):
+    with SessionLocal() as s:
+        ds = s.query(DungeonSession).get(ds_id)
+        if not ds or ds.status != "active":
+            return
+        theme = DUNGEONS[ds.theme_key]
+        phase = theme["phases"][ds.current_phase - 1]
+        if ds.current_question == 0:
+            intro = f"{phase['name']}\n\n{phase['intro']}"
+            for tg in (ds.player1_tg_id, ds.player2_tg_id):
+                try: await bot.send_message(tg, intro)
+                except Exception: pass
+        
+        q_list = phase["questions"]
+        if ds.current_question >= len(q_list):
+            await advance_phase(ds_id)
             return
             
         q = q_list[ds.current_question]
