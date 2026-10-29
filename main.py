@@ -875,7 +875,6 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
     
     await send_quiz_question(cb, q_i + 1, scores, state) 
     # ========== ПОИСК НАПАРНИКА ==========
-@dp.callback_query(F.data == "menu_search")
 
 # ========== ПОИСК НАПАРНИКА (КАСКАДНЫЙ) ==========
 search_tasks = {}
