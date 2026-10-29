@@ -3742,18 +3742,16 @@ async def start_dungeon_with(u: User, partner: User, chat_id: int, msg_id: int):
         p1_id = u_check.tg_id
         p2_id = p_check.tg_id
 
-    # Добавляем ссылку на аккаунт (tg://user)
     link2 = f"<a href='tg://user?id={p2_id}'>{p2_name}</a>"
     link1 = f"<a href='tg://user?id={p1_id}'>{p1_name}</a>"
 
-        try:
+    try:
         await update_search_msg(chat_id, msg_id, f"🎉 Нашли напарника: {link2}!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…", None)
         await bot.send_message(partner.tg_id, f"🎉 Тебя выбрал(-а) {link1}!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…")
     except Exception:
         pass
 
     await send_dungeon_question(ds_id)
-
 async def send_dungeon_question(ds_id: int):
     with SessionLocal() as s:
         ds = s.query(DungeonSession).get(ds_id)
