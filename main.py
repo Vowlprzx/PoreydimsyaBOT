@@ -878,6 +878,7 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "menu_search")
 
 # ========== ПОИСК НАПАРНИКА (КАСКАДНЫЙ) ==========
+search_tasks = {}
 
 @dp.callback_query(F.data == "menu_search")
 async def cb_search(cb: CallbackQuery, state: FSMContext):
@@ -894,7 +895,13 @@ async def cb_search(cb: CallbackQuery, state: FSMContext):
         "🔍 <b>Ищем напарника...</b>\n\nСтрогий поиск (город, возраст, интересы). Ждём 10 секунд...",
         reply_markup=kb_cancel_search()
     )
-    asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
+    
+    # Отменяем старый поиск, если он был
+    if u.tg_id in search_tasks:
+        search_tasks[u.tg_id].cancel()
+        
+    task = asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
+    search_tasks[u.tg_id] = task
 
 async def update_search_msg(chat_id, msg_id, text, markup):
     try:
@@ -934,24 +941,30 @@ async def search_process(tg_id: int, chat_id: int, msg_id: int):
         partner = await find_partner(tg_id, "any", False)
         if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
 
-        # Если никого не нашли
         u = get_user(tg_id)
         if u and u.status == "searching":
             u.status = "idle"
             save_user(u)
             await update_search_msg(chat_id, msg_id, "🔍 Пока никого не нашли. Попробуй позже — база растёт!", kb_main())
 
+    except asyncio.CancelledError:
+        pass
     except Exception as e:
         logging.error(f"Критическая ошибка в поиске: {e}", exc_info=True)
         u = get_user(tg_id)
         if u and u.status == "searching":
             u.status = "idle"
             save_user(u)
-            await update_search_msg(chat_id, msg_id, "❌ Ошибка при поиске. Попробуй еще раз.", kb_main())
+            # Отправляем текст ошибки прямо в чат, чтобы мы её увидели
+            await update_search_msg(chat_id, msg_id, f"❌ Ошибка при поиске: <code>{e}</code>", kb_main())
+    finally:
+        search_tasks.pop(tg_id, None)
 
 @dp.callback_query(F.data == "menu_cancel_search")
 async def cb_cancel_search(cb: CallbackQuery):
     await cb.answer("Поиск отменен")
+    if cb.from_user.id in search_tasks:
+        search_tasks[cb.from_user.id].cancel()
     u = get_user(cb.from_user.id)
     if u and u.status == "searching":
         u.status = "idle"
@@ -1022,7 +1035,11 @@ async def start_dungeon_with(u: User, partner: User, chat_id: int, msg_id: int):
         await bot.send_message(partner.tg_id, f"🎉 Тебя выбрал(-а) <b>{p1_name}</b>!\nТема: {DUNGEONS[theme_key]['name']}\n\nНачинаем рейд…")
     except Exception:
         pass
-    await send_dungeon_question(ds_id)
+        
+    try:
+        await send_dungeon_question(ds_id)
+    except Exception as e:
+        logging.error(f"Ошибка при старте подземелья: {e}", exc_info=True)
    
 
 # ========== ДАНЖ ==========
