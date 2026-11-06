@@ -3994,9 +3994,14 @@ async def finish_dungeon(ds_id: int, s):
             u.partner_tg_id = None
     s.commit()
     
-    # Создаем ссылки на аккаунты
-    link1 = f"<a href='tg://user?id={u1.tg_id}'>{u1.username}</a>"
-    link2 = f"<a href='tg://user?id={u2.tg_id}'>{u2.username}</a>"
+    # Умная генерация ссылок: если есть юзернейм (не технический), даем https, иначе tg://
+    def get_link(u):
+        if u.username and not u.username.startswith("user_"):
+            return f"<a href='https://t.me/{u.username}'>{u.username}</a>"
+        return f"<a href='tg://user?id={u.tg_id}'>{u.username}</a>"
+        
+    link1 = get_link(u1)
+    link2 = get_link(u2)
     
     text = f"🏁 <b>Финал рейда</b>\n\n{verdict}\n{desc}\n\nСовпадений: {total}/11\n✨ +{reward} опыта"
     
