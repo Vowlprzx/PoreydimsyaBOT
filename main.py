@@ -2477,29 +2477,6 @@ DUNGEONS["volcano"] = {
         "2": {"target_question": 7, "add_text": "Элементал говорит: «Ты выбрал путь в обход. Хитро. И одиноко»."},
     }
 }
-# ========== ВЕБ-СЕРВЕР И ЗАПУСК ==========
-async def health_check(request):
-    return web.Response(text="Bot is alive!")
-
-async def main():
-    logging.info("Бот запускается…")
-    
-    # Запускаем веб-сервер для Bothost
-    app = web.Application()
-    app.router.add_get('/', health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", 3000))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    logging.info(f"Web server started on port {port}")
-
-    # Запускаем фоновую задачу таймаута
-    asyncio.create_task(timeout_worker())
-    
-    # Запускаем самого бота
-    await dp.start_polling(bot)
-
 
 # ========== БАЗА ДАННЫХ ==========
 if DATABASE_URL.startswith("postgresql"):
@@ -2516,6 +2493,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     tg_id = Column(BigInteger, unique=True, nullable=False)
     username = Column(String(64), nullable=False)
+    tg_username = Column(String(64), nullable=True)
     class_name = Column(String(64), nullable=False)
     level = Column(Integer, default=1)
     experience = Column(Integer, default=0)
@@ -2939,15 +2917,15 @@ async def cb_consent(cb: CallbackQuery, state: FSMContext):
             u = User(
                 tg_id=cb.from_user.id,
                 username=cb.from_user.username or f"user_{cb.from_user.id}",
+                tg_username=cb.from_user.username,
                 class_name="🎭 Странник",
                 consent_given=True,
                 is_18plus=True,
-                is_pioneer=(count < MAX_PREMIUM_USERS_FIRST_1000),
+                is_pioneer=(count < 1000)
             )
             s.add(u)
         else:
             u.consent_given = True
-            u.is_18plus = True
         s.commit()
     await cb.message.edit_text("✅ Согласие получено.\n\nКак тебя зовут? Введи ник (2–20 символов).")
     await state.set_state(Reg.nickname)
@@ -3879,9 +3857,28 @@ async def advance_phase(ds_id: int, s=None):
     if own: s = SessionLocal()
     try:
         ds = s.query(DungeonSession).get(ds_id)
+        
+        # --- ПОКАЗ АНКЕТЫ ПОСЛЕ 1 ФАЗЫ ---
+        if ds.current_phase == 1:
+            u1 = s.query(User).filter_by(tg_id=ds.player1_tg_id).first()
+            u2 = s.query(User).filter_by(tg_id=ds.player2_tg_id).first()
+            
+            flags1 = "|".join([x for x in u1.red_flags.split("|") if x]) if u1.red_flags else "—"
+            flags2 = "|".join([x for x in u2.red_flags.split("|") if x]) if u2.red_flags else "—"
+            
+            text1 = f"🌙 <b>Ночь спускается на лагерь...</b>\n\nПока вы отдыхаете, вы лучше узнаете друг друга.\n\n👤 <b>Твой напарник:</b>\n🌟 Требование к напарнику: {u2.mayak}\n🚩 Рэд флаги: {flags2}"
+            text2 = f"🌙 <b>Ночь спускается на лагерь...</b>\n\nПока вы отдыхаете, вы лучше узнаете друг друга.\n\n👤 <b>Твой напарник:</b>\n🌟 Требование к напарнику: {u1.mayak}\n🚩 Рэд флаги: {flags1}"
+            
+            try: await bot.send_message(ds.player1_tg_id, text1)
+            except Exception: pass
+            try: await bot.send_message(ds.player2_tg_id, text2)
+            except Exception: pass
+        # ------------------------------------------
+
         ds.current_phase += 1
         ds.current_question = 0
         ds.last_activity = datetime.datetime.utcnow()
+        
         if ds.current_phase > 3:
             ds.status = "finished"
             s.commit()
@@ -3958,6 +3955,7 @@ async def finish_dungeon(ds_id: int, s):
     ds = s.query(DungeonSession).get(ds_id)
     total = ds.phase1_matches + ds.phase2_matches + ds.phase3_matches
     ratio = total / 11
+    
     if ratio >= 0.75: verdict, desc, reward = "💖 Идеальный резонанс", "Вы совпали почти во всём.", 100
     elif ratio >= 0.5: verdict, desc, reward = "✨ Хорошая совместимость", "Вам есть о чём поговорить.", 70
     elif ratio >= 0.25: verdict, desc, reward = "🤔 Есть над чем подумать", "Совпадений немного, но они есть.", 40
@@ -3965,6 +3963,7 @@ async def finish_dungeon(ds_id: int, s):
     
     u1 = s.query(User).filter_by(tg_id=ds.player1_tg_id).first()
     u2 = s.query(User).filter_by(tg_id=ds.player2_tg_id).first()
+    
     for u in (u1, u2):
         if u:
             u.experience += reward
@@ -3972,10 +3971,23 @@ async def finish_dungeon(ds_id: int, s):
             u.status = "idle"
             u.partner_tg_id = None
     s.commit()
+    
+    # Умная генерация ссылок: если есть tg_username, даем https, иначе tg://
+    def get_link(u):
+        if u.tg_username:
+            return f"<a href='https://t.me/{u.tg_username}'>{u.username}</a>"
+        return f"<a href='tg://user?id={u.tg_id}'>{u.username}</a>"
+        
+    link1 = get_link(u1)
+    link2 = get_link(u2)
+    
     text = f"🏁 <b>Финал рейда</b>\n\n{verdict}\n{desc}\n\nСовпадений: {total}/11\n✨ +{reward} опыта"
-    for tg in (ds.player1_tg_id, ds.player2_tg_id):
-        try: await bot.send_message(tg, text, reply_markup=kb_after_dungeon())
-        except Exception: pass
+    
+    try: await bot.send_message(ds.player1_tg_id, text + f"\n\n💬 Связаться с напарником: {link2}", reply_markup=kb_after_dungeon())
+    except Exception: pass
+    
+    try: await bot.send_message(ds.player2_tg_id, text + f"\n\n💬 Связаться с напарником: {link1}", reply_markup=kb_after_dungeon())
+    except Exception: pass
 
 # ========== ТАЙМАУТ ==========
 async def timeout_worker():
