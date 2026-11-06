@@ -2935,12 +2935,12 @@ async def cb_consent(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     with SessionLocal() as s:
         u = s.query(User).filter_by(tg_id=cb.from_user.id).first()
-                if not u:
+        if not u:
             count = s.query(User).count()
             u = User(
                 tg_id=cb.from_user.id,
-                username=cb.from_user.username or f"user_{cb.from_user.id}", # Это будет ник в боте
-                tg_username=cb.from_user.username, # <--- СОХРАНЯЕМ РЕАЛЬНЫЙ ЮЗЕРНЕЙМ
+                username=cb.from_user.username or f"user_{cb.from_user.id}",
+                tg_username=cb.from_user.username,
                 class_name="🎭 Странник",
                 consent_given=True,
                 is_18plus=True,
@@ -2949,7 +2949,6 @@ async def cb_consent(cb: CallbackQuery, state: FSMContext):
             s.add(u)
         else:
             u.consent_given = True
-            u.is_18plus = True
         s.commit()
     await cb.message.edit_text("✅ Согласие получено.\n\nКак тебя зовут? Введи ник (2–20 символов).")
     await state.set_state(Reg.nickname)
