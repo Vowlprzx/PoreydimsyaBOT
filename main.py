@@ -2516,6 +2516,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     tg_id = Column(BigInteger, unique=True, nullable=False)
     username = Column(String(64), nullable=False)
+    tg_username = Column(String(64), nullable=True)
     class_name = Column(String(64), nullable=False)
     level = Column(Integer, default=1)
     experience = Column(Integer, default=0)
@@ -2585,8 +2586,8 @@ class Partnership(Base):
     games_count = Column(Integer, default=0)
     last_played_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-#Base.metadata.drop_all(engine)
-#Base.metadata.create_all(engine)
+Base.metadata.drop_all(engine)
+Base.metadata.create_all(engine)
 
 # ========== УТИЛИТЫ ==========
 def calculate_level(exp):
@@ -2934,15 +2935,16 @@ async def cb_consent(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     with SessionLocal() as s:
         u = s.query(User).filter_by(tg_id=cb.from_user.id).first()
-        if not u:
+                if not u:
             count = s.query(User).count()
             u = User(
                 tg_id=cb.from_user.id,
-                username=cb.from_user.username or f"user_{cb.from_user.id}",
+                username=cb.from_user.username or f"user_{cb.from_user.id}", # Это будет ник в боте
+                tg_username=cb.from_user.username, # <--- СОХРАНЯЕМ РЕАЛЬНЫЙ ЮЗЕРНЕЙМ
                 class_name="🎭 Странник",
                 consent_given=True,
                 is_18plus=True,
-                is_pioneer=(count < MAX_PREMIUM_USERS_FIRST_1000),
+                is_pioneer=(count < 1000)
             )
             s.add(u)
         else:
@@ -3994,10 +3996,10 @@ async def finish_dungeon(ds_id: int, s):
             u.partner_tg_id = None
     s.commit()
     
-    # Умная генерация ссылок: если есть юзернейм (не технический), даем https, иначе tg://
+    # Умная генерация ссылок: если есть tg_username, даем https, иначе tg://
     def get_link(u):
-        if u.username and not u.username.startswith("user_"):
-            return f"<a href='https://t.me/{u.username}'>{u.username}</a>"
+        if u.tg_username:
+            return f"<a href='https://t.me/{u.tg_username}'>{u.username}</a>"
         return f"<a href='tg://user?id={u.tg_id}'>{u.username}</a>"
         
     link1 = get_link(u1)
@@ -4005,7 +4007,6 @@ async def finish_dungeon(ds_id: int, s):
     
     text = f"🏁 <b>Финал рейда</b>\n\n{verdict}\n{desc}\n\nСовпадений: {total}/11\n✨ +{reward} опыта"
     
-    # Отправляем финал с кнопками и ссылками
     try: await bot.send_message(ds.player1_tg_id, text + f"\n\n💬 Связаться с напарником: {link2}", reply_markup=kb_after_dungeon())
     except Exception: pass
     
