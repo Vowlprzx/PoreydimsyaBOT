@@ -2477,29 +2477,6 @@ DUNGEONS["volcano"] = {
         "2": {"target_question": 7, "add_text": "Элементал говорит: «Ты выбрал путь в обход. Хитро. И одиноко»."},
     }
 }
-# ========== ВЕБ-СЕРВЕР И ЗАПУСК ==========
-async def health_check(request):
-    return web.Response(text="Bot is alive!")
-
-async def main():
-    logging.info("Бот запускается…")
-    
-    # Запускаем веб-сервер для Bothost
-    app = web.Application()
-    app.router.add_get('/', health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", 3000))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    logging.info(f"Web server started on port {port}")
-
-    # Запускаем фоновую задачу таймаута
-    asyncio.create_task(timeout_worker())
-    
-    # Запускаем самого бота
-    await dp.start_polling(bot)
-
 
 # ========== БАЗА ДАННЫХ ==========
 if DATABASE_URL.startswith("postgresql"):
