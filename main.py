@@ -3879,9 +3879,28 @@ async def advance_phase(ds_id: int, s=None):
     if own: s = SessionLocal()
     try:
         ds = s.query(DungeonSession).get(ds_id)
+        
+        # --- ПОКАЗ АНКЕТЫ ПОСЛЕ 1 ФАЗЫ ---
+        if ds.current_phase == 1:
+            u1 = s.query(User).filter_by(tg_id=ds.player1_tg_id).first()
+            u2 = s.query(User).filter_by(tg_id=ds.player2_tg_id).first()
+            
+            flags1 = "|".join([x for x in u1.red_flags.split("|") if x]) if u1.red_flags else "—"
+            flags2 = "|".join([x for x in u2.red_flags.split("|") if x]) if u2.red_flags else "—"
+            
+            text1 = f"🌙 <b>Ночь спускается на лагерь...</b>\n\nПока вы отдыхаете, вы лучше узнаете друг друга.\n\n👤 <b>Твой напарник:</b>\n🌟 Требование к напарнику: {u2.mayak}\n🚩 Рэд флаги: {flags2}"
+            text2 = f"🌙 <b>Ночь спускается на лагерь...</b>\n\nПока вы отдыхаете, вы лучше узнаете друг друга.\n\n👤 <b>Твой напарник:</b>\n🌟 Требование к напарнику: {u1.mayak}\n🚩 Рэд флаги: {flags1}"
+            
+            try: await bot.send_message(ds.player1_tg_id, text1)
+            except Exception: pass
+            try: await bot.send_message(ds.player2_tg_id, text2)
+            except Exception: pass
+        # ------------------------------------------
+
         ds.current_phase += 1
         ds.current_question = 0
         ds.last_activity = datetime.datetime.utcnow()
+        
         if ds.current_phase > 3:
             ds.status = "finished"
             s.commit()
@@ -3958,6 +3977,7 @@ async def finish_dungeon(ds_id: int, s):
     ds = s.query(DungeonSession).get(ds_id)
     total = ds.phase1_matches + ds.phase2_matches + ds.phase3_matches
     ratio = total / 11
+    
     if ratio >= 0.75: verdict, desc, reward = "💖 Идеальный резонанс", "Вы совпали почти во всём.", 100
     elif ratio >= 0.5: verdict, desc, reward = "✨ Хорошая совместимость", "Вам есть о чём поговорить.", 70
     elif ratio >= 0.25: verdict, desc, reward = "🤔 Есть над чем подумать", "Совпадений немного, но они есть.", 40
@@ -3965,6 +3985,7 @@ async def finish_dungeon(ds_id: int, s):
     
     u1 = s.query(User).filter_by(tg_id=ds.player1_tg_id).first()
     u2 = s.query(User).filter_by(tg_id=ds.player2_tg_id).first()
+    
     for u in (u1, u2):
         if u:
             u.experience += reward
@@ -3972,10 +3993,19 @@ async def finish_dungeon(ds_id: int, s):
             u.status = "idle"
             u.partner_tg_id = None
     s.commit()
+    
+    # Создаем ссылки на аккаунты
+    link1 = f"<a href='tg://user?id={u1.tg_id}'>{u1.username}</a>"
+    link2 = f"<a href='tg://user?id={u2.tg_id}'>{u2.username}</a>"
+    
     text = f"🏁 <b>Финал рейда</b>\n\n{verdict}\n{desc}\n\nСовпадений: {total}/11\n✨ +{reward} опыта"
-    for tg in (ds.player1_tg_id, ds.player2_tg_id):
-        try: await bot.send_message(tg, text, reply_markup=kb_after_dungeon())
-        except Exception: pass
+    
+    # Отправляем финал с кнопками и ссылками
+    try: await bot.send_message(ds.player1_tg_id, text + f"\n\n💬 Связаться с напарником: {link2}", reply_markup=kb_after_dungeon())
+    except Exception: pass
+    
+    try: await bot.send_message(ds.player2_tg_id, text + f"\n\n💬 Связаться с напарником: {link1}", reply_markup=kb_after_dungeon())
+    except Exception: pass
 
 # ========== ТАЙМАУТ ==========
 async def timeout_worker():
