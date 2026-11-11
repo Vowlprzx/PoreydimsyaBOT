@@ -2605,6 +2605,17 @@ def contains_link(text):
         if re.search(pat, text, re.IGNORECASE):
             return True
     return False
+    TRANSLIT_MAP = {
+    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e', 'ж': 'zh',
+    'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o',
+    'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'kh', 'ц': 'ts',
+    'ч': 'ch', 'ш': 'sh', 'щ': 'shch', 'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya'
+}
+
+def clean_city(text):
+    if not text: return ""
+    text = text.lower().strip()
+    return "".join(TRANSLIT_MAP.get(c, c) for c in text)
 
 # ========== КЛАССЫ ==========
 ALL_BASE_CLASSES = ["Рыцарь", "Тёмный Страж", "Варвар", "Волшебник", "Инженер", "Бард", "Тень", "Следопыт", "Жрец", "Друид"]
