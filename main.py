@@ -8,6 +8,7 @@ import random
 import datetime
 import re
 import os
+import difflib
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -2563,8 +2564,8 @@ class Partnership(Base):
     games_count = Column(Integer, default=0)
     last_played_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-#Base.metadata.drop_all(engine)
-#Base.metadata.create_all(engine)
+Base.metadata.drop_all(engine)
+Base.metadata.create_all(engine)
 
 # ========== УТИЛИТЫ ==========
 def calculate_level(exp):
@@ -3681,17 +3682,27 @@ async def find_partner(tg_id: int, mode: str, with_tags: bool):
         )
         
         if mode == "strict":
-            query = query.filter(func.lower(func.trim(User.city)) == func.lower(func.trim(u.city)))
             query = query.filter(User.age.between(u.age - 2, u.age + 2))
-        elif mode == "city":
-            query = query.filter(func.lower(func.trim(User.city)) == func.lower(func.trim(u.city)))
             
         candidates = query.all()
+        target_city = clean_city(u.city)
+        
         for c in candidates:
+            c_city = clean_city(c.city)
+            
+            if mode in ["strict", "city"]:
+                # Если города не совпадают на 100%, проверяем их схожесть (fuzzy matching)
+                if c_city != target_city:
+                    similarity = difflib.SequenceMatcher(None, target_city, c_city).ratio()
+                    # Если совпадение меньше 75% (например, "москва" и "масква" дают ~83%), пропускаем
+                    if similarity < 0.75:
+                        continue
+                    
             if with_tags:
                 c_tags = {t.tag for t in s.query(UserTag).filter_by(user_id=c.tg_id).all()}
                 if not (my_tags & c_tags):
                     continue
+                    
             return c
     return None
 
