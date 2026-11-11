@@ -2770,6 +2770,9 @@ class Edit(StatesGroup):
 class Exchange(StatesGroup):
     msg = State()
 
+class AdminState(StatesGroup): 
+    broadcast = State()
+
 # ========== БОТ ==========
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
@@ -2835,6 +2838,12 @@ def kb_after_dungeon():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎭 Профиль", callback_data="menu_profile")],
         [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")],
+    ])
+    
+def kb_admin():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="admin_broadcast")],
     ])
     # ========== ХЕЛПЕРЫ БД ==========
 def get_user(tg_id: int):
@@ -4010,7 +4019,73 @@ async def timeout_worker():
                         except Exception: pass
         except Exception as e:
             logging.error(f"timeout_worker: {e}")
+            
+# ========== АДМИН-ПАНЕЛЬ ==========
+ADMIN_ID = 8923218710  
 
+@dp.message(Command("admin"))
+async def cmd_admin(msg: Message):
+    if msg.from_user.id != ADMIN_ID:
+        return 
+        
+    await msg.answer("👑 <b>Добро пожаловать в админ-панель!</b>\nВыбери действие:", reply_markup=kb_admin())
+
+@dp.callback_query(F.data == "admin_stats")
+async def cb_admin_stats(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID: return
+    
+    with SessionLocal() as s:
+        total_users = s.query(User).count()
+        active_users = s.query(User).filter(User.status != "idle").count()
+        total_dungeons = s.query(DungeonSession).count()
+        finished_dungeons = s.query(DungeonSession).filter(DungeonSession.status == "finished").count()
+        
+        top_cities = s.query(User.city, func.count(User.id)).group_by(User.city).order_by(func.count(User.id).desc()).limit(3).all()
+        cities_text = "\n".join([f"  • {city}: {count}" for city, count in top_cities if city])
+
+    text = (
+        f"📊 <b>Статистика бота</b>\n\n"
+        f"👥 Всего пользователей: {total_users}\n"
+        f"⚔️ Сейчас в игре: {active_users}\n\n"
+        f"🏁 Всего сессий: {total_dungeons}\n"
+        f"✅ Завершено рейдов: {finished_dungeons}\n\n"
+        f"🏙 <b>Топ-3 города:</b>\n{cities_text}"
+    )
+    await cb.message.edit_text(text, reply_markup=kb_admin())
+
+@dp.callback_query(F.data == "admin_broadcast")
+async def cb_admin_broadcast(cb: CallbackQuery, state: FSMContext):
+    if cb.from_user.id != ADMIN_ID: return
+    await cb.message.edit_text("📢 Отправь мне текст, который нужно разослать ВСЕМ пользователям.\n\nДля отмены напиши /cancel")
+    await state.set_state(AdminState.broadcast)
+
+@dp.message(AdminState.broadcast)
+async def do_broadcast(msg: Message, state: FSMContext):
+    if msg.from_user.id != ADMIN_ID: return
+    if msg.text == "/cancel":
+        await state.clear()
+        await msg.answer("Рассылка отменена.", reply_markup=kb_main())
+        return
+        
+    text_to_send = msg.text
+    with SessionLocal() as s:
+        users = s.query(User).all()
+        user_ids = [u.tg_id for u in users]
+        
+    await msg.answer(f"🚀 Начинаю рассылку для {len(user_ids)} пользователей...")
+    
+    success = 0
+    for uid in user_ids:
+        try:
+            await bot.send_message(uid, text_to_send)
+            success += 1
+            await asyncio.sleep(0.05) # Защита от бана за спам
+        except Exception:
+            pass
+            
+    await state.clear()
+    await msg.answer(f"✅ Рассылка завершена! Успешно доставлено: {success} из {len(user_ids)}.")
+    
 # ========== ВЕБ-СЕРВЕР И ЗАПУСК ==========
 async def health_check(request):
     return web.Response(text="Bot is alive!")
