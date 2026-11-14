@@ -2511,6 +2511,7 @@ class User(Base):
     experience = Column(Integer, default=0)
     
     age = Column(Integer, nullable=True)
+    gender = Column(String(10), nullable=True)  # 'male' или 'female'
     city = Column(String(100), nullable=True)
     mayak = Column(String(200), default="")
     red_flags = Column(String(300), default="")
@@ -2575,8 +2576,8 @@ class Partnership(Base):
     games_count = Column(Integer, default=0)
     last_played_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-#Base.metadata.drop_all(engine)
-#Base.metadata.create_all(engine)
+Base.metadata.drop_all(engine)
+Base.metadata.create_all(engine)
 
 # ========== УТИЛИТЫ ==========
 def calculate_level(exp):
@@ -2771,6 +2772,7 @@ class Reg(StatesGroup):
     consent = State()
     nickname = State()
     age = State()
+    gender = State()  
     city = State()
     mayak = State()
     tags = State()
@@ -2801,8 +2803,13 @@ def kb_main():
         [InlineKeyboardButton(text="🎭 Профиль", callback_data="menu_profile"), InlineKeyboardButton(text="🔍 Найти напарника", callback_data="menu_search")],
         [InlineKeyboardButton(text="🎁 Ежедневный вход", callback_data="menu_daily")],
         [InlineKeyboardButton(text="❓ Помощь", callback_data="menu_help")],
+    
     ])
-
+def kb_gender():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👦 Парень", callback_data="gender_male")],
+        [InlineKeyboardButton(text="👧 Девушка", callback_data="gender_female")],
+    ])
 def kb_cancel_search():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отменить поиск", callback_data="menu_cancel_search")],
@@ -2975,10 +2982,23 @@ async def reg_age(msg: Message, state: FSMContext):
     if not (18 <= age <= 99):
         await msg.answer("❌ Возраст от 18 до 99.")
         return
+    
     u = get_user(msg.from_user.id)
     u.age = age
     save_user(u)
-    await msg.answer("Из какого ты города?")
+    
+    await msg.answer("Укажи свой пол:", reply_markup=kb_gender())
+    await state.set_state(Reg.gender)
+
+@dp.callback_query(F.data.startswith("gender_"), Reg.gender)
+async def reg_gender(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    gender = cb.data.split("_")[1]
+    u = get_user(cb.from_user.id)
+    u.gender = gender
+    save_user(u)
+    
+    await cb.message.edit_text("Из какого ты города?")
     await state.set_state(Reg.city)
 
 @dp.message(Reg.city)
@@ -3372,6 +3392,7 @@ def render_profile(u: User) -> str:
         f"<b>{u.class_name}</b> · Уровень {lvl}\n"
         f"{bar} {cur}/{need}\n\n"
         f"📍 Город: {u.city or '—'}\n"
+        f"⚧ Пол: {'Парень' if u.gender == 'male' else 'Девушка' if u.gender == 'female' else '—'}\n"
         f"🎂 Возраст: {u.age or '—'}\n"
         f"🌟 Требование к напарнику: {u.mayak or '—'}\n"
         f"🚩 Рэд флаги: {flags_str}\n"
