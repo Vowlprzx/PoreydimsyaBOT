@@ -3029,6 +3029,7 @@ async def reg_mayak(msg: Message, state: FSMContext):
     
     # ЗАПУСКАЕМ КВИЗ СРАЗУ ПОСЛЕ ТРЕБОВАНИЯ
     await msg.answer("🎯 Отлично! Теперь короткий квиз на класс (5 вопросов).")
+    await state.set_state(Reg.mayak) # принудительно держим состояние, пока не начнется квиз
     await send_quiz_question(msg, 0, {c: 0 for c in ALL_BASE_CLASSES}, state)
 
 # ========== МЕНЮ ПРОФИЛЯ ==========
