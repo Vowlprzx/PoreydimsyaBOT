@@ -32,6 +32,10 @@ TRANSLIT_MAP = {
     'ч': 'ch', 'ш': 'sh', 'щ': 'shch', 'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya'
 }
 
+CLASS_IMAGES = {
+    "⚗️ Алхимик_male": "AgACAgIAAxkBAAEKubVqVq_ru8d5uzLVKRML8inKo7HgpsHAAC1x1rGqwA-Es9mpGZu9pk7gEAAwIAA3MAAz8E"
+}
+
 def clean_city(text):
     if not text: return ""
     text = text.lower().strip()
@@ -2576,8 +2580,8 @@ class Partnership(Base):
     games_count = Column(Integer, default=0)
     last_played_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-#Base.metadata.drop_all(engine)
-#Base.metadata.create_all(engine)
+Base.metadata.drop_all(engine)
+Base.metadata.create_all(engine)
 
 # ========== УТИЛИТЫ ==========
 def calculate_level(exp):
@@ -3313,10 +3317,28 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
             u.class_name = cls_name
             save_user(u)
             text = f"🎉 Твой класс: <b>{cls_name}</b>\n\n{cls_desc}\n\nТеперь выбери свои интересы (теги)."
-            if isinstance(target, CallbackQuery):
-                await target.message.edit_text(text)
+                        # Определяем пол для поиска картинки
+            gender_str = u.gender if u.gender else "male"
+            img_key = f"{cls_name}_{gender_str}"
+            
+            if img_key in CLASS_IMAGES:
+                try:
+                    if isinstance(target, CallbackQuery):
+                        await target.message.delete() # Удаляем старое сообщение с кнопками
+                    await bot.send_photo(
+                        chat_id=_uid, 
+                        photo=CLASS_IMAGES[img_key], 
+                        caption=text
+                    )
+                except Exception as e:
+                    logging.error(f"Ошибка отправки фото: {e}")
+                    await bot.send_message(_uid, text)
             else:
-                await target.answer(text)
+                # Если картинки нет — шлем текст, как раньше
+                if isinstance(target, CallbackQuery):
+                    await target.message.edit_text(text)
+                else:
+                    await target.answer(text)
             QUIZ_SCORES.pop(_uid, None)
             await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
             await send_tag_question(target, state)
