@@ -34,7 +34,7 @@ TRANSLIT_MAP = {
 
 CLASS_IMAGES = {
     "⚗️ Алхимик_male": "AgACAgIAAxkBAAEKubVqVq_ru8d5uzLVKRML8inKo7HgpsHAAC1x1rGqwA-Es9mpGZu9pk7gEAAwIAA3MAAz8E"
-}
+}}
 
 def clean_city(text):
     if not text: return ""
@@ -3320,7 +3320,10 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
                         # Определяем пол для поиска картинки
             gender_str = u.gender if u.gender else "male"
             img_key = f"{cls_name}_{gender_str}"
-            
+                        # Временная проверка
+            if _uid == 8923218710: # Твой ID
+                await bot.send_message(_uid, f"DEBUG: Ищу ключ: '{img_key}'. В словаре: {list(CLASS_IMAGES.keys())}")
+                
             if img_key in CLASS_IMAGES:
                 try:
                     if isinstance(target, CallbackQuery):
