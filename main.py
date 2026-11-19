@@ -33,7 +33,7 @@ TRANSLIT_MAP = {
 }
 
 CLASS_IMAGES = {
-    "⚗️ Алхимик_male": "AgACAgIAAxkBAAEKubVqVq_ru8d5uzLVKRML8inKo7HgpsHAAC1x1rGqwA-Es9mpGZu9pk7gEAAwIAA3MAAz8E"
+    "Алхимик_male": "AgACAgIAAxkBAAEKubVqVq_ru8d5uzLVKRML8inKo7HgpsHAAC1x1rGqwA-Es9mpGZu9pk7gEAAwIAA3MAAz8E"
 }
 
 def clean_city(text):
@@ -3293,6 +3293,29 @@ async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
         await cb.message.edit_text("✅ Рэд флаги обновлены!", reply_markup=kb_main())
         await cb.message.answer(render_profile(u), reply_markup=kb_profile())
     else:
+        # Отрезаем эмодзи (берем последнее слово из "⚗️ Алхимик" -> "Алхимик")
+        clean_class_name = u.class_name.split(" ")[-1]
+        gender_str = u.gender if u.gender else "male"
+        img_key = f"{clean_class_name}_{gender_str}"
+        
+        # Отправляем тебе отладочное сообщение
+        await bot.send_message(cb.from_user.id, f"DEBUG: Ищу ключ: '{img_key}'. В словаре: {list(CLASS_IMAGES.keys())}")
+        
+        if img_key in CLASS_IMAGES:
+            try:
+                await cb.message.delete()
+                await bot.send_photo(
+                    chat_id=cb.from_user.id,
+                    photo=CLASS_IMAGES[img_key],
+                    caption=f"🎉 Регистрация завершена! Твой класс: <b>{u.class_name}</b>",
+                    reply_markup=kb_main()
+                )
+                await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
+                return
+            except Exception as e:
+                await bot.send_message(cb.from_user.id, f"Ошибка фото: {e}")
+                logging.error(f"Ошибка отправки фото: {e}")
+        
         await cb.message.edit_text("🎉 Регистрация завершена! Открываю профиль...")
         await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
 
