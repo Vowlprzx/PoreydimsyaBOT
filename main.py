@@ -3310,38 +3310,17 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
     if scores is None:
         scores = {c: 0 for c in ALL_BASE_CLASSES}
         
-    if q_idx >= len(QUIZ):
+       if q_idx >= len(QUIZ):
         cls_name, cls_desc = get_hybrid_class(scores)
         u = get_user(_uid)
         if u:
             u.class_name = cls_name
             save_user(u)
             text = f"🎉 Твой класс: <b>{cls_name}</b>\n\n{cls_desc}\n\nТеперь выбери свои интересы (теги)."
-                        # Определяем пол для поиска картинки
-            gender_str = u.gender if u.gender else "male"
-            img_key = f"{cls_name}_{gender_str}"
-                        # Временная проверка
-            if _uid == 8923218710: # Твой ID
-                await bot.send_message(_uid, f"DEBUG: Ищу ключ: '{img_key}'. В словаре: {list(CLASS_IMAGES.keys())}")
-                
-            if img_key in CLASS_IMAGES:
-                try:
-                    if isinstance(target, CallbackQuery):
-                        await target.message.delete() # Удаляем старое сообщение с кнопками
-                    await bot.send_photo(
-                        chat_id=_uid, 
-                        photo=CLASS_IMAGES[img_key], 
-                        caption=text
-                    )
-                except Exception as e:
-                    logging.error(f"Ошибка отправки фото: {e}")
-                    await bot.send_message(_uid, text)
+            if isinstance(target, CallbackQuery):
+                await target.message.edit_text(text)
             else:
-                # Если картинки нет — шлем текст, как раньше
-                if isinstance(target, CallbackQuery):
-                    await target.message.edit_text(text)
-                else:
-                    await target.answer(text)
+                await target.answer(text)
             QUIZ_SCORES.pop(_uid, None)
             await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
             await send_tag_question(target, state)
@@ -3585,7 +3564,7 @@ async def cb_rf_toggle(cb: CallbackQuery, state: FSMContext):
         chosen.add(i)
     await state.update_data(rf_chosen=list(chosen))
     await cb.message.edit_reply_markup(reply_markup=kb_red_flags(chosen))
-
+    
 @dp.callback_query(F.data == "rf_ok", Reg.red_flags)
 async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
@@ -3601,6 +3580,25 @@ async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
         await cb.message.edit_text("✅ Рэд флаги обновлены!", reply_markup=kb_main())
         await cb.message.answer(render_profile(u), reply_markup=kb_profile())
     else:
+        # Проверяем наличие картинки
+        gender_str = u.gender if u.gender else "male"
+        img_key = f"{u.class_name}_{gender_str}"
+        
+        if img_key in CLASS_IMAGES:
+            try:
+                await cb.message.delete() # Удаляем сообщение "Регистрация завершена"
+                await bot.send_photo(
+                    chat_id=cb.from_user.id,
+                    photo=CLASS_IMAGES[img_key],
+                    caption=f"🎉 Регистрация завершена! Твой класс: <b>{u.class_name}</b>",
+                    reply_markup=kb_main()
+                )
+                await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
+                return
+            except Exception as e:
+                logging.error(f"Ошибка отправки фото: {e}")
+        
+        # Если картинки нет (или произошла ошибка) — шлем текст, как раньше
         await cb.message.edit_text("🎉 Регистрация завершена! Открываю профиль...")
         await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
 
