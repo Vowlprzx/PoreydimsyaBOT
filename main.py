@@ -3646,7 +3646,7 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
             else: await target.answer(text)
             QUIZ_SCORES.pop(_uid, None)
             await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=False)
-            await send_tag_question(msg, state))
+            await send_tag_question(msg, state)
         else:
             QUIZ_SCORES.pop(_uid, None)
     else:
