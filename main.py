@@ -34,7 +34,7 @@ TRANSLIT_MAP = {
 
 CLASS_IMAGES = {
     "⚗️ Алхимик_male": "AgACAgIAAxkBAAEKubVqVq_ru8d5uzLVKRML8inKo7HgpsHAAC1x1rGqwA-Es9mpGZu9pk7gEAAwIAA3MAAz8E"
-}}
+}
 
 def clean_city(text):
     if not text: return ""
