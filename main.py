@@ -3043,13 +3043,55 @@ async def cb_profile(cb: CallbackQuery):
     if not u or not u.consent_given:
         await cb.message.edit_text("Сначала /start")
         return
-    await cb.message.edit_text(render_profile(u), reply_markup=kb_profile())
+    
+    # Определяем картинку для профиля
+    clean_class_name = u.class_name.split(" ")[-1]
+    gender_str = u.gender if u.gender else "male"
+    img_key = f"{clean_class_name}_{gender_str}"
+    
+    text = render_profile(u)
+    
+    await cb.message.delete() # Удаляем старое сообщение
+    
+    if img_key in CLASS_IMAGES:
+        try:
+            await bot.send_photo(
+                chat_id=cb.from_user.id, 
+                photo=CLASS_IMAGES[img_key], 
+                caption=text, 
+                reply_markup=kb_profile()
+            )
+            return
+        except Exception as e:
+            logging.error(f"Ошибка фото в профиле: {e}")
+            
+    await bot.send_message(cb.from_user.id, text, reply_markup=kb_profile())
 
 @dp.callback_query(F.data == "menu_back")
 async def cb_back(cb: CallbackQuery):
     await cb.answer()
     u = get_user(cb.from_user.id)
-    await cb.message.edit_text(render_profile(u), reply_markup=kb_main())
+    
+    clean_class_name = u.class_name.split(" ")[-1]
+    gender_str = u.gender if u.gender else "male"
+    img_key = f"{clean_class_name}_{gender_str}"
+    
+    text = render_profile(u)
+    await cb.message.delete()
+    
+    if img_key in CLASS_IMAGES:
+        try:
+            await bot.send_photo(
+                chat_id=cb.from_user.id, 
+                photo=CLASS_IMAGES[img_key], 
+                caption=text, 
+                reply_markup=kb_main()
+            )
+            return
+        except Exception as e:
+            logging.error(f"Ошибка фото в меню: {e}")
+            
+    await bot.send_message(cb.from_user.id, text, reply_markup=kb_main())
 
 @dp.callback_query(F.data == "menu_help")
 async def cb_help(cb: CallbackQuery):
@@ -3295,33 +3337,10 @@ async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
     
     if is_editing:
         await cb.message.edit_text("✅ Рэд флаги обновлены!", reply_markup=kb_main())
-        await cb.message.answer(render_profile(u), reply_markup=kb_profile())
-    else:
-        # Отрезаем эмодзи (берем последнее слово из "⚗️ Алхимик" -> "Алхимик")
-        clean_class_name = u.class_name.split(" ")[-1]
-        gender_str = u.gender if u.gender else "male"
-        img_key = f"{clean_class_name}_{gender_str}"
+        return
         
-        # Отправляем тебе отладочное сообщение
-        await bot.send_message(cb.from_user.id, f"DEBUG: Ищу ключ: '{img_key}'. В словаре: {list(CLASS_IMAGES.keys())}")
-        
-        if img_key in CLASS_IMAGES:
-            try:
-                await cb.message.delete()
-                await bot.send_photo(
-                    chat_id=cb.from_user.id,
-                    photo=CLASS_IMAGES[img_key],
-                    caption=f"🎉 Регистрация завершена! Твой класс: <b>{u.class_name}</b>",
-                    reply_markup=kb_main()
-                )
-                await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
-                return
-            except Exception as e:
-                await bot.send_message(cb.from_user.id, f"Ошибка фото: {e}")
-                logging.error(f"Ошибка отправки фото: {e}")
-        
-        await cb.message.edit_text("🎉 Регистрация завершена! Открываю профиль...")
-        await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
+    # Просто вызываем показ профиля (он сам разберется с картинкой)
+    await cb_profile(cb)
 
 QUIZ_SCORES = {}
 
