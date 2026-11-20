@@ -3655,6 +3655,7 @@ def _uid_from(target) -> int:
 
 async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSMContext = None):
     _uid = _uid_from(target)
+    await bot.send_message(_uid, f"DEBUG: Вопросов в базе: {len(QUIZ)}")
     if scores is None: scores = {c: 0 for c in ALL_BASE_CLASSES}
         
     if q_idx >= len(QUIZ):
