@@ -4256,6 +4256,13 @@ async def do_broadcast(msg: Message, state: FSMContext):
     await state.clear()
     await msg.answer(f"✅ Рассылка завершена! Успешно доставлено: {success} из {len(user_ids)}.")
     
+    # ========== ВРЕМЕННЫЙ ШПИОН ДЛЯ FILE_ID ==========
+@dp.message(F.photo)
+async def debug_photo_id(msg: Message):
+    # Берем картинку в максимальном качестве
+    file_id = msg.photo[-1].file_id
+    await msg.answer(f"Вот твой правильный file_id для этого бота:\n\n<code>{file_id}</code>")
+    
 # ========== ВЕБ-СЕРВЕР И ЗАПУСК ==========
 async def health_check(request):
     return web.Response(text="Bot is alive!")
