@@ -33,7 +33,7 @@ TRANSLIT_MAP = {
 }
 
 CLASS_IMAGES = {
-    "Алхимик_male": "AgACAgIAAxkBAAEKh3oAUD4GSxbt3fRxnDaUOZ2_qERQACZBrgN3NEUhsp3TYlpqCVQEAAwIAA3MAAz8E"
+    "Алхимик_male": "AgACAgIAAxkBAAIETmsCh45qGC6DPQP1YIDnYjWP-tEfAAJkIGsbc3QRSE45RXc0Thq7AQADAgADeQADPQQ"
 }
 
 def clean_city(text):
