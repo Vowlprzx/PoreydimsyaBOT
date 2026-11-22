@@ -57,6 +57,11 @@ TURN_TIMEOUT_SECONDS = 300
 MAX_PREMIUM_USERS_FIRST_1000 = 1000
 
 logging.basicConfig(level=logging.INFO)
+
+# ========== БОТ ==========
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+dp = Dispatcher()
+
 # ========== ПОДЗЕМЕЛЬЯ ==========
 DUNGEONS = {}
 
@@ -2852,9 +2857,6 @@ class Exchange(StatesGroup):
 class AdminState(StatesGroup): 
     broadcast = State()
 
-# ========== БОТ ==========
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-dp = Dispatcher()
 
 # ========== КЛАВИАТУРЫ ==========
 def kb_consent():
