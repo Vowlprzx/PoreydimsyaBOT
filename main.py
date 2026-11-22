@@ -33,7 +33,95 @@ TRANSLIT_MAP = {
 }
 
 CLASS_IMAGES = {
-    "Алхимик_male": "AgACAgIAAxkBAAIETmsCh45qGC6DPQP1YIDnYjWP-tEfAAJkIGsbc3QRSE45RXc0Thq7AQADAgADeQADPQQ"
+    "Алхимик_female": "AgACAgIAAxkBAAIEUmsCihzfOPQyqU-V1w2MUK3izT6vAALzGmsbLTMYSAwlmHg_n7DkAQADAgADeQADPQQ",
+    "Артефактор_female": "AgACAgIAAxkBAAIEVGsCikb6GQ2EpmfvWFkQWOEWxiLpAAL0GmsbLTMYSDVf9BYaTNmRAQADAgADeQADPQQ",
+    "Артефактор_male": "AgACAgIAAxkBAAIEVmsCina5URLzMoDFVfDlm9bsT0EQAAL1GmsbLTMYSBdUfhRpaZSmAQADAgADeQADPQQ",
+    "Берсерк природы_female": "AgACAgIAAxkBAAIEWGsCiqAzzgVnbz9Qoc4QlT3nxTT8AAL2GmsbLTMYSFhpLGEPoZQHAQADAgADeQADPQQ",
+    "Берсерк природы_male": "AgACAgIAAxkBAAIE8msCmDSj-RvxkTY42MWuARMEKkTnAAJeG2sbLTMYSFJKR5zxNqf7AQADAgADeQADPQQ",
+    "Вампир_female": "AgACAgIAAxkBAAIEWmsCitiJZVg2HKKPuP2l1m1zKrL8AAL3GmsbLTMYSIW9GwT4i2mAAQADAgADeQADPQQ",
+    "Вампир_male": "AgACAgIAAxkBAAIEXGsCivz7XvJAoM65n5g3ar00WrcKAAL4GmsbLTMYSAQ8UXYSUVDYAQADAgADeQADPQQ",
+    "Взломщик_female": "AgACAgIAAxkBAAIEXmsCixZbg4l0PmqD3OnKW0t-UfMwAAL5GmsbLTMYSKA7F0TI3epcAQADAgADeQADPQQ",
+    "Взломщик_male": "AgACAgIAAxkBAAIEYGsCiy5k07hbb_ci2ravLbf-fBjQAAL6GmsbLTMYSFfkWexAXZ9-AQADAgADeQADPQQ",
+    "Герольд чести_female": "AgACAgIAAxkBAAIEYmsCi0WA4ba_Ir-y8cI9jIURw-R_AAL7GmsbLTMYSL0QrQQW47EyAQADAgADeQADPQQ",
+    "Герольд чести_male": "AgACAgIAAxkBAAIEZGsCi1thIqsgvsZMgqCpsoQOLWYKAAL8GmsbLTMYSKeiF7eR_yW2AQADAgADeQADPQQ",
+    "Дикарь_female": "AgACAgIAAxkBAAIEZmsCi3ZzoqxieVS3XHT97SDbFYkiAAL9GmsbLTMYSPoo8mwBdUjgAQADAgADeQADPQQ",
+    "Дикарь_male": "AgACAgIAAxkBAAIEaGsCi4wW3bZJy0uFuRpHXWSsCH1vAAL-GmsbLTMYSM1zh1uFiI2yAQADAgADeQADPQQ",
+    "Дух леса_female": "AgACAgIAAxkBAAIEamsCi6A2v0XSF_SesMwlqpVgdn7xAAL_GmsbLTMYSI8wqu_R8ZO_AQADAgADeQADPQQ",
+    "Дух леса_male": "AgACAgIAAxkBAAIEbGsCi8lDTQG1fw_SwIxSXrXaInRtAAMbaxstMxhISyhVguDntEABAAMCAAN5AAM9BA",
+    "Духовный пастырь_female": "AgACAgIAAxkBAAIEbmsCi9oaN7NpXRMrvyDGnftzjpXNAAIBG2sbLTMYSMDyQcOOUgWuAQADAgADeQADPQQ",
+    "Духовный пастырь_male": "AgACAgIAAxkBAAIEcGsCi_ap3PpAuJEQw1NTSwYF7nHrAAICG2sbLTMYSKYnfcoch4jUAQADAgADeQADPQQ",
+    "Зверолов_female": "AgACAgIAAxkBAAIEcmsCjBUB6TZ5qkIbAnJJe6yuHztfAAIDG2sbLTMYSGNWxb1PwXT4AQADAgADeQADPQQ",
+    "Зверолов_male": "AgACAgIAAxkBAAIEdGsCjCpXarcrAsDCvdUY0x_PRYd7AAIEG2sbLTMYSIpyfTFwk70mAQADAgADeQADPQQ",
+    "Изобретатель_female": "AgACAgIAAxkBAAIEdmsCjDf9fR7D44h4-L1DkFdrO84ZAAIFG2sbLTMYSBv0FMjT0wm-AQADAgADeQADPQQ",
+    "Изобретатель_male": "AgACAgIAAxkBAAIEeGsCjE9Bal7lvpPVfVyEW9v2-a0KAAIGG2sbLTMYSMj2K2u22YsgAQADAgADeQADPQQ",
+    "Иллюзионист_female": "AgACAgIAAxkBAAIEemsCjGRRa2xvLnFTHtZyTlQ9j_DdAAIHG2sbLTMYSFhcMmxhCiXGAQADAgADeQADPQQ",
+    "Иллюзионист_male": "AgACAgIAAxkBAAIEfGsCjH0IwhW_yZlWFzPpk5FS8TA9AAIIG2sbLTMYSLYltdszj4TUAQADAgADeQADPQQ",
+    "Искуситель_female": "AgACAgIAAxkBAAIEfmsCjOLni0yKVO0_yNZGYdebowJJAAIJG2sbLTMYSG-OsvsE9xoqAQADAgADeQADPQQ",
+    "Искуситель_male": "AgACAgIAAxkBAAIEgGsCjPqH5tkEgEA3u0LkCIdobkNnAAIKG2sbLTMYSJOvH4JrX0QkAQADAgADeQADPQQ",
+    "Каратель_female": "AgACAgIAAxkBAAIEgmsCjREgZAhxVag2y46GKlRe5rRSAAILG2sbLTMYSEPA3Kj0dBjTAQADAgADeAADPQQ",
+    "Каратель_male": "AgACAgIAAxkBAAIEhGsCjS5mozwe4EeP-7Q9gIvk6WdCAAING2sbLTMYSHlgGPq2BsNlAQADAgADeQADPQQ",
+    "Картограф_female": "AgACAgIAAxkBAAIEhmsCjV3-dqofeVQRDEbIDSrNBW8VAAIQG2sbLTMYSMlAjw0_X0ELAQADAgADeQADPQQ",
+    "Картограф_male": "AgACAgIAAxkBAAIEiGsCjXeMyaeTDHzDHZu7wH8oOOIsAAIRG2sbLTMYSBsAAXT4_9SOUwEAAwIAA3kAAz0E",
+    "Кузнец_female": "AgACAgIAAxkBAAIEimsCjYPl_GUiwu9hNWGe-3BCHCvAAAISG2sbLTMYSFS-xiHzNmCwAQADAgADeQADPQQ",
+    "Кузнец_male": "AgACAgIAAxkBAAIEjGsCjaHZPEz4tQAB3kZCI9SlDg7_5wACExtrGy0zGEh0OFRzy82hbQEAAwIAA3kAAz0E",
+    "Кукловод_female": "AgACAgIAAxkBAAIEjmsCja3SBTu1AfUIhq-9RSFHEkLMAAIUG2sbLTMYSN-IGTZlJG3TAQADAgADeQADPQQ",
+    "Кукловод_male": "AgACAgIAAxkBAAIEkGsCjcbM3MEns_hPt1gBQb3yTo1SAAIVG2sbLTMYSF9aqJi0NU5rAQADAgADeQADPQQ",
+    "Лазутчик_female": "AgACAgIAAxkBAAIEkmsCjdZACLpFXBBjpIXvz4pj_k04AAIWG2sbLTMYSOtH0onbtkNaAQADAgADeQADPQQ",
+    "Лазутчик_male": "AgACAgIAAxkBAAIElGsCjfK9-gTDB3V5XZhaM1_CWNMbAAIXG2sbLTMYSHk3NrW3tH9wAQADAgADeQADPQQ",
+    "Лич_female": "AgACAgIAAxkBAAIElmsCjgABQ1NMjssQe1OsnKNPPesL2AACGBtrGy0zGEgJsk1dODmSBwEAAwIAA3kAAz0E",
+    "Лич_male": "AgACAgIAAxkBAAIEmGsCjhZEDOIeQj63I7V6wjeu8MMkAAIZG2sbLTMYSMLFlD9tsLcZAQADAgADeQADPQQ",
+    "Магистр_female": "AgACAgIAAxkBAAIEmmsCjkP49tZfL7K8Ge1sMRiqnH4EAAIaG2sbLTMYSEdRMJ-pj2RSAQADAgADeQADPQQ",
+    "Магистр_male": "AgACAgIAAxkBAAIEnGsCjlzEHLe1dLxV-nM8S7n-ex4cAAIbG2sbLTMYSAv9sWSzncFYAQADAgADeQADPQQ",
+    "Маэстро_female": "AgACAgIAAxkBAAIEnmsCjmsIPra09x502zZoxOdB18ZaAAIcG2sbLTMYSCdoxbz8xKa8AQADAgADeAADPQQ",
+    "Маэстро_male": "AgACAgIAAxkBAAIEoGsCjoTwLyvfniLh6i91LdRfmAI3AAIdG2sbLTMYSH7L77rIRR_nAQADAgADeAADPQQ",
+    "Мистик_female": "AgACAgIAAxkBAAIEomsCjpNtZcz7CETjTQVLZ20FLCkzAAIeG2sbLTMYSPxxSUtxSpX-AQADAgADeQADPQQ",
+    "Мистик_male": "AgACAgIAAxkBAAIEpGsCjqc5Vms-__X9nmXFv4NiGRchAAIfG2sbLTMYSNtUqjnnnqcNAQADAgADeAADPQQ",
+    "Некромант_female": "AgACAgIAAxkBAAIEpmsCjrlrTEGsajSN99I0qLFc4V27AAIgG2sbLTMYSA6pzOnfg54IAQADAgADeQADPQQ",
+    "Некромант_male": "AgACAgIAAxkBAAIEqGsCjtXnHMK7jLZgfzMPNDrJz9iKAAIhG2sbLTMYSJ2eNu1l1-IbAQADAgADeQADPQQ",
+    "Ночной страж_female": "AgACAgIAAxkBAAIEqmsCjunewHH9NFiwsrOvZAJlM1lJAAIiG2sbLTMYSBZEcoBbKph9AQADAgADeQADPQQ",
+    "Ночной страж_male": "AgACAgIAAxkBAAIErGsCjxnmk8urXPSO_zR9NH4Kvr_PAAIjG2sbLTMYSAUjCqIh7gsPAQADAgADeAADPQQ",
+    "Паладин_female": "AgACAgIAAxkBAAIErmsCjykIMfTC06nUVPX013jXG-58AAIkG2sbLTMYSIrl2990Q7kZAQADAgADeQADPQQ",
+    "Паладин_male": "AgACAgIAAxkBAAIEsGsCjz-T7_RD1-6Np4ZpJN3dmurYAAIlG2sbLTMYSARjiZOWB4JCAQADAgADeQADPQQ",
+    "Палач_female": "AgACAgIAAxkBAAIEsmsCj1bl1zbRbR7gw8kAAfC_4STmyQACJxtrGy0zGEjFxg7mLiE27QEAAwIAA3kAAz0E",
+    "Палач_male": "AgACAgIAAxkBAAIEtGsCj3KMj9DTYcWcuPv4aCNcxQIVAAIoG2sbLTMYSJfp51DVskKbAQADAgADeQADPQQ",
+    "Пилигрим_female": "AgACAgIAAxkBAAIEtmsCj3_axhIHOOnogssnAzCNps7oAAIpG2sbLTMYSJT9FRfOU9pBAQADAgADeQADPQQ",
+    "Пилигрим_male": "AgACAgIAAxkBAAIEuGsCj5XgJ0yNKkDvUF7nDtfwKaLAAAIqG2sbLTMYSB_hR5ilFL76AQADAgADeAADPQQ",
+    "Призрак_female": "AgACAgIAAxkBAAIEumsCj6LTYAlFDfbbzQ-p3V96BrhrAAIrG2sbLTMYSBq6W17QRcaCAQADAgADeQADPQQ",
+    "Призрак_male": "AgACAgIAAxkBAAIEvGsCj7_GvSOqVX72ZGXwW0HC480_AAIsG2sbLTMYSBt9ly0pjqX-AQADAgADeQADPQQ",
+    "Призрачный охотник_female": "AgACAgIAAxkBAAIEvmsCj89Ft2gdsbjSvn8_GI-Z8M7zAAItG2sbLTMYSHlehTa0BxYhAQADAgADeQADPQQ",
+    "Призрачный охотник_male": "AgACAgIAAxkBAAIEwGsCj-hSj7LLe0EhJuP6AmCOQEQZAAIuG2sbLTMYSI1f-DwCmokNAQADAgADeQADPQQ",
+    "Провидец_female": "AgACAgIAAxkBAAIEwmsCj_p1BKhHPW5k4sTYKy-EyBqIAAIvG2sbLTMYSCw-Qm8ZBpKoAQADAgADeQADPQQ",
+    "Провидец_male": "AgACAgIAAxkBAAIExGsCkA7Z5EIAAf3PFwyfxngoBIN8MwACMRtrGy0zGEhPksJ5oAMB5wEAAwIAA3kAAz0E",
+    "Проповедник_female": "AgACAgIAAxkBAAIExmsCkBtyrrBZ5MqteLFy69JMc8BsAAIyG2sbLTMYSP5BKgyWdzrkAQADAgADeQADPQQ",
+    "Проповедник_male": "AgACAgIAAxkBAAIEyGsCkDGN1RZ-3dDzCle0CNYCwYl1AAIzG2sbLTMYSBGC53jpG3fRAQADAgADeQADPQQ",
+    "Рыцарь-механик_female": "AgACAgIAAxkBAAIEymsCkD5ZT0YXA-0w5TMGUMluA4ayAAI0G2sbLTMYSMTzX_SuTZIhAQADAgADeQADPQQ",
+    "Рыцарь-механик_male": "AgACAgIAAxkBAAIEzGsCkFho0IhdKBr7eWQZR50EiLm5AAI3G2sbLTMYSH1lze5MSg5-AQADAgADeQADPQQ",
+    "Садовник_female": "AgACAgIAAxkBAAIEzmsCkGNON6WKvldQw2WjwzT3IiXhAAI5G2sbLTMYSBDywWcFaESaAQADAgADeQADPQQ",
+    "Садовник_male": "AgACAgIAAxkBAAIE0GsCkIBWua3-rvXqRDfyrDB9ox8bAAI6G2sbLTMYSO3tutr4tZMNAQADAgADeQADPQQ",
+    "Скальд_female": "AgACAgIAAxkBAAIE0msCkI8uQh4ObkjYVVCUtpIrl9-MAAI7G2sbLTMYSF4KXaCFuhrwAQADAgADeQADPQQ",
+    "Скальд_male": "AgACAgIAAxkBAAIE1GsCkKavLEVzsFxRd4UmU1PhZqp5AAI8G2sbLTMYSM4Zt-kexpE1AQADAgADeQADPQQ",
+    "Странник_female": "AgACAgIAAxkBAAIE1msCkLgZhDHvbh99nkL2BRQybqVcAAI9G2sbLTMYSLvFyjcTRhJ6AQADAgADeQADPQQ",
+    "Странник_male": "AgACAgIAAxkBAAIE2GsCkMtlmxgpqBNgLytyve4AAZd9UQACPhtrGy0zGEjgHPmOnJb0cgEAAwIAA3kAAz0E",
+    "Судья_female": "AgACAgIAAxkBAAIE2msCkNkkBY8_K8Y_1SKJkaBeOCC_AAJAG2sbLTMYSHVhBKFJNbBoAQADAgADeQADPQQ",
+    "Судья_male": "AgACAgIAAxkBAAIE3GsCkO0dT_PiL9nJvkFHuOg7yMMIAAJBG2sbLTMYSA5C28YOsmTIAQADAgADeQADPQQ",
+    "Фанатик_female": "AgACAgIAAxkBAAIE3msCkP-YlN3n6EdllV6e8XH3xPkPAAJCG2sbLTMYSNmrR2YpWfIgAQADAgADeQADPQQ",
+    "Фанатик_male": "AgACAgIAAxkBAAIE4GsClp2sYuxHOgc9-y2jH5LAYq2tAAJTG2sbLTMYSApkilXIHBuwAQADAgADeQADPQQ",
+    "Хранитель леса_female": "AgACAgIAAxkBAAIE4msClq9Z9ogiqqGbkDT9KIotIPspAAJUG2sbLTMYSIA4nUPsw1UlAQADAgADeQADPQQ",
+    "Хранитель леса_male": "AgACAgIAAxkBAAIE5GsClsa7RuAv74klCSKMpMPUYxRaAAJVG2sbLTMYSPwEFpHt3cQ9AQADAgADeQADPQQ",
+    "Хранитель тайн_female": "AgACAgIAAxkBAAIE5msCltLjye5VurdTHi5Fuj5v5w5QAAJWG2sbLTMYSAaMv9cyTw9bAQADAgADeQADPQQ",
+    "Хранитель тайн_male": "AgACAgIAAxkBAAIE6GsClurXJ-NrG2NFiOZZKPEOfCUzAAJXG2sbLTMYSJFSiPAYJAgtAQADAgADeQADPQQ",
+    "Шаман_female": "AgACAgIAAxkBAAIE6msClvd-zysse7jdf4eQHS50ISYnAAJYG2sbLTMYSOBSD-Ds26N3AQADAgADeQADPQQ",
+    "Шаман_male": "AgACAgIAAxkBAAIE7GsClxpktWf-E01ESwzFl-OEGlx4AAJZG2sbLTMYSP6necBCTanVAQADAgADeQADPQQ",
+    "Элементалист_female": "AgACAgIAAxkBAAIE7msClykDzBVqN9QEZ-GsvPYHVVsmAAJaG2sbLTMYSGxHzZ2iAiwCAQADAgADeQADPQQ",
+    "Элементалист_male": "AgACAgIAAxkBAAIE8GsCl0Tfwr1iTPnJTb48CMsCwM_hAAJbG2sbLTMYSNRxhtTRsCxsAQADAgADeQADPQQ",
+    "Берсерк_female": "AgACAgIAAxkBAAIE9GsCmS7ckJFGwBCPFhZDrMsGMEYXAAJhG2sbLTMYSBzJtn0bR3eAAQADAgADeQADPQQ",
+    "Берсерк_male": "AgACAgIAAxkBAAIE9msCmUTtfGzgK0862PQvjJXY4NlpAAJiG2sbLTMYSO8YAh0BX-hbAQADAgADeQADPQQ",
+    "Страж границ_female": "AgACAgIAAxkBAAIE-GsCmo_8v2ciGsIjRtUX0qRLOjAIAAJkG2sbLTMYSPK6zIfmTyUzAQADAgADeQADPQQ",
+    "Страж границ_male": "AgACAgIAAxkBAAIE-msCmqm7RVAtBRxqkaHlyCUfX2qAAAJlG2sbLTMYSGhmuGSgGEp_AQADAgADeQADPQQ",
+    "Хранитель рощи_female": "AgACAgIAAxkBAAIE_GsCm7B2cxwVn6MFwbMm_GL6IbqfAAJmG2sbLTMYSHemcIF3pem-AQADAgADeQADPQQ",
+    "Хранитель рощи_male": "AgACAgIAAxkBAAIE_msCm8pqzZCQwQSHn9bu4BdIqe2iAAJnG2sbLTMYSMgQZOngyQl-AQADAgADeQADPQQ",
+    "Инквизитор_female": "AgACAgIAAxkBAAIFAAFrAp6r34OPRmNJixYQ5d5ooeWw8gACbBtrGy0zGEgu8LMT1PYrpgEAAwIAA3kAAz0E",
+    "Инквизитор_male": "AgACAgIAAxkBAAIFAmsCnsyqaepFlFeA6dp7T5EDR5ZHAAJtG2sbLTMYSKebc9TgVik-AQADAgADeQADPQQ"
 }
 
 def clean_city(text):
@@ -4256,12 +4344,6 @@ async def do_broadcast(msg: Message, state: FSMContext):
     await state.clear()
     await msg.answer(f"✅ Рассылка завершена! Успешно доставлено: {success} из {len(user_ids)}.")
     
-    # ========== ВРЕМЕННЫЙ ШПИОН ДЛЯ FILE_ID ==========
-@dp.message(F.photo)
-async def debug_photo_id(msg: Message):
-    # Берем картинку в максимальном качестве
-    file_id = msg.photo[-1].file_id
-    await msg.answer(f"Вот твой правильный file_id для этого бота:\n\n<code>{file_id}</code>")
     
 # ========== ВЕБ-СЕРВЕР И ЗАПУСК ==========
 async def health_check(request):
