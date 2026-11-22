@@ -2744,6 +2744,67 @@ QUIZ = [
     },
 ]
 
+QUIZ_SCORES = {}
+
+def _uid_from(target) -> int:
+    if isinstance(target, CallbackQuery):
+        return target.from_user.id
+    if target.from_user:
+        return target.from_user.id
+    return target.chat.id
+
+async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSMContext = None):
+    _uid = _uid_from(target)
+    if scores is None:
+        scores = {c: 0 for c in ALL_BASE_CLASSES}
+        
+    if q_idx >= len(QUIZ):
+        cls_name, cls_desc = get_hybrid_class(scores)
+        u = get_user(_uid)
+        if u:
+            u.class_name = cls_name
+            save_user(u)
+            text = f"🎉 Твой класс: <b>{cls_name}</b>\n\n{cls_desc}\n\nТеперь выбери свои интересы (теги)."
+            if isinstance(target, CallbackQuery):
+                await target.message.edit_text(text)
+            else:
+                await target.answer(text)
+            QUIZ_SCORES.pop(_uid, None)
+            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=False)
+            await send_tag_question(target, state)
+        else:
+            QUIZ_SCORES.pop(_uid, None)
+    else:
+        q = QUIZ[q_idx]
+        text = f"🎯 <b>Вопрос {q_idx+1}/{len(QUIZ)}</b>\n\n{q['text']}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=opt_text[:60], callback_data=f"quiz_{q_idx}_{i}")]
+            for i, (opt_text, cls) in enumerate(q["options"])
+        ])
+        if isinstance(target, CallbackQuery):
+            await target.message.edit_text(text, reply_markup=kb)
+        else:
+            await target.answer(text, reply_markup=kb)
+        QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
+
+
+@dp.callback_query(F.data.startswith("quiz_"))
+async def cb_quiz(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    _, q_s, opt_s = cb.data.split("_")
+    q_i, opt_i = int(q_s), int(opt_s)
+    st = QUIZ_SCORES.get(cb.from_user.id)
+    
+    if not st or st["idx"] != q_i:
+        await cb.answer("Устарело, начни заново", show_alert=True)
+        return
+        
+    scores = st["scores"]
+    cls = QUIZ[q_i]["options"][opt_i][1]
+    scores[cls] = scores.get(cls, 0) + 1
+    
+    await send_quiz_question(cb, q_i + 1, scores, state)
+
 # ========== ТЕГИ ==========
 TAG_QUESTIONS = [
     {"category": "Развлечения", "question": "🎮 Как ты обычно проводишь свободное время?", "tags": ["Видеоигры", "Фильмы", "Книги", "Музыка", "Рисование", "Настольные игры"]},
@@ -3028,10 +3089,6 @@ async def reg_mayak(msg: Message, state: FSMContext):
     save_user(u)
 
     await msg.answer("🎯 Отлично! Теперь короткий квиз на класс (5 вопросов).")
-    
-    # ОЧИЩАЕМ ПАМЯТЬ, чтобы бот больше не ловил случайный текст
-    await state.clear() 
-    
     await send_quiz_question(msg, 0, {c: 0 for c in ALL_BASE_CLASSES}, state)
 
 # ========== МЕНЮ ПРОФИЛЯ ==========
