@@ -33,7 +33,7 @@ TRANSLIT_MAP = {
 }
 
 CLASS_IMAGES = {
-    "Алхимик_male": "AgACAgIAAxkBAAEKubVqVq_ru8d5uzLVKRML8inKo7HgpsHAAC1x1rGqwA-Es9mpGZu9pk7gEAAwIAA3MAAz8E"
+    "Алхимик_male": "AgACAgIAAxkBAAEKh3oAUD4GSxbt3fRxnDaUOZ2_qERQACZBrgN3NEUhsp3TYlpqCVQEAAwIAA3MAAz8E"
 }
 
 def clean_city(text):
@@ -2585,8 +2585,8 @@ class Partnership(Base):
     games_count = Column(Integer, default=0)
     last_played_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-Base.metadata.drop_all(engine)
-Base.metadata.create_all(engine)
+#Base.metadata.drop_all(engine)
+#Base.metadata.create_all(engine)
 
 # ========== УТИЛИТЫ ==========
 def calculate_level(exp):
