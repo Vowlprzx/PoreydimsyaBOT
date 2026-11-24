@@ -32,6 +32,98 @@ TRANSLIT_MAP = {
     'ч': 'ch', 'ш': 'sh', 'щ': 'shch', 'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya'
 }
 
+CLASS_IMAGES = {
+    "Алхимик_female": "AgACAgIAAxkBAAIEUmsCihzfOPQyqU-V1w2MUK3izT6vAALzGmsbLTMYSAwlmHg_n7DkAQADAgADeQADPQQ",
+    "Артефактор_female": "AgACAgIAAxkBAAIEVGsCikb6GQ2EpmfvWFkQWOEWxiLpAAL0GmsbLTMYSDVf9BYaTNmRAQADAgADeQADPQQ",
+    "Артефактор_male": "AgACAgIAAxkBAAIEVmsCina5URLzMoDFVfDlm9bsT0EQAAL1GmsbLTMYSBdUfhRpaZSmAQADAgADeQADPQQ",
+    "Берсерк природы_female": "AgACAgIAAxkBAAIEWGsCiqAzzgVnbz9Qoc4QlT3nxTT8AAL2GmsbLTMYSFhpLGEPoZQHAQADAgADeQADPQQ",
+    "Берсерк природы_male": "AgACAgIAAxkBAAIE8msCmDSj-RvxkTY42MWuARMEKkTnAAJeG2sbLTMYSFJKR5zxNqf7AQADAgADeQADPQQ",
+    "Вампир_female": "AgACAgIAAxkBAAIEWmsCitiJZVg2HKKPuP2l1m1zKrL8AAL3GmsbLTMYSIW9GwT4i2mAAQADAgADeQADPQQ",
+    "Вампир_male": "AgACAgIAAxkBAAIEXGsCivz7XvJAoM65n5g3ar00WrcKAAL4GmsbLTMYSAQ8UXYSUVDYAQADAgADeQADPQQ",
+    "Взломщик_female": "AgACAgIAAxkBAAIEXmsCixZbg4l0PmqD3OnKW0t-UfMwAAL5GmsbLTMYSKA7F0TI3epcAQADAgADeQADPQQ",
+    "Взломщик_male": "AgACAgIAAxkBAAIEYGsCiy5k07hbb_ci2ravLbf-fBjQAAL6GmsbLTMYSFfkWexAXZ9-AQADAgADeQADPQQ",
+    "Герольд чести_female": "AgACAgIAAxkBAAIEYmsCi0WA4ba_Ir-y8cI9jIURw-R_AAL7GmsbLTMYSL0QrQQW47EyAQADAgADeQADPQQ",
+    "Герольд чести_male": "AgACAgIAAxkBAAIEZGsCi1thIqsgvsZMgqCpsoQOLWYKAAL8GmsbLTMYSKeiF7eR_yW2AQADAgADeQADPQQ",
+    "Дикарь_female": "AgACAgIAAxkBAAIEZmsCi3ZzoqxieVS3XHT97SDbFYkiAAL9GmsbLTMYSPoo8mwBdUjgAQADAgADeQADPQQ",
+    "Дикарь_male": "AgACAgIAAxkBAAIEaGsCi4wW3bZJy0uFuRpHXWSsCH1vAAL-GmsbLTMYSM1zh1uFiI2yAQADAgADeQADPQQ",
+    "Дух леса_female": "AgACAgIAAxkBAAIEamsCi6A2v0XSF_SesMwlqpVgdn7xAAL_GmsbLTMYSI8wqu_R8ZO_AQADAgADeQADPQQ",
+    "Дух леса_male": "AgACAgIAAxkBAAIEbGsCi8lDTQG1fw_SwIxSXrXaInRtAAMbaxstMxhISyhVguDntEABAAMCAAN5AAM9BA",
+    "Духовный пастырь_female": "AgACAgIAAxkBAAIEbmsCi9oaN7NpXRMrvyDGnftzjpXNAAIBG2sbLTMYSMDyQcOOUgWuAQADAgADeQADPQQ",
+    "Духовный пастырь_male": "AgACAgIAAxkBAAIEcGsCi_ap3PpAuJEQw1NTSwYF7nHrAAICG2sbLTMYSKYnfcoch4jUAQADAgADeQADPQQ",
+    "Зверолов_female": "AgACAgIAAxkBAAIEcmsCjBUB6TZ5qkIbAnJJe6yuHztfAAIDG2sbLTMYSGNWxb1PwXT4AQADAgADeQADPQQ",
+    "Зверолов_male": "AgACAgIAAxkBAAIEdGsCjCpXarcrAsDCvdUY0x_PRYd7AAIEG2sbLTMYSIpyfTFwk70mAQADAgADeQADPQQ",
+    "Изобретатель_female": "AgACAgIAAxkBAAIEdmsCjDf9fR7D44h4-L1DkFdrO84ZAAIFG2sbLTMYSBv0FMjT0wm-AQADAgADeQADPQQ",
+    "Изобретатель_male": "AgACAgIAAxkBAAIEeGsCjE9Bal7lvpPVfVyEW9v2-a0KAAIGG2sbLTMYSMj2K2u22YsgAQADAgADeQADPQQ",
+    "Иллюзионист_female": "AgACAgIAAxkBAAIEemsCjGRRa2xvLnFTHtZyTlQ9j_DdAAIHG2sbLTMYSFhcMmxhCiXGAQADAgADeQADPQQ",
+    "Иллюзионист_male": "AgACAgIAAxkBAAIEfGsCjH0IwhW_yZlWFzPpk5FS8TA9AAIIG2sbLTMYSLYltdszj4TUAQADAgADeQADPQQ",
+    "Искуситель_female": "AgACAgIAAxkBAAIEfmsCjOLni0yKVO0_yNZGYdebowJJAAIJG2sbLTMYSG-OsvsE9xoqAQADAgADeQADPQQ",
+    "Искуситель_male": "AgACAgIAAxkBAAIEgGsCjPqH5tkEgEA3u0LkCIdobkNnAAIKG2sbLTMYSJOvH4JrX0QkAQADAgADeQADPQQ",
+    "Каратель_female": "AgACAgIAAxkBAAIEgmsCjREgZAhxVag2y46GKlRe5rRSAAILG2sbLTMYSEPA3Kj0dBjTAQADAgADeAADPQQ",
+    "Каратель_male": "AgACAgIAAxkBAAIEhGsCjS5mozwe4EeP-7Q9gIvk6WdCAAING2sbLTMYSHlgGPq2BsNlAQADAgADeQADPQQ",
+    "Картограф_female": "AgACAgIAAxkBAAIEhmsCjV3-dqofeVQRDEbIDSrNBW8VAAIQG2sbLTMYSMlAjw0_X0ELAQADAgADeQADPQQ",
+    "Картограф_male": "AgACAgIAAxkBAAIEiGsCjXeMyaeTDHzDHZu7wH8oOOIsAAIRG2sbLTMYSBsAAXT4_9SOUwEAAwIAA3kAAz0E",
+    "Кузнец_female": "AgACAgIAAxkBAAIEimsCjYPl_GUiwu9hNWGe-3BCHCvAAAISG2sbLTMYSFS-xiHzNmCwAQADAgADeQADPQQ",
+    "Кузнец_male": "AgACAgIAAxkBAAIEjGsCjaHZPEz4tQAB3kZCI9SlDg7_5wACExtrGy0zGEh0OFRzy82hbQEAAwIAA3kAAz0E",
+    "Кукловод_female": "AgACAgIAAxkBAAIEjmsCja3SBTu1AfUIhq-9RSFHEkLMAAIUG2sbLTMYSN-IGTZlJG3TAQADAgADeQADPQQ",
+    "Кукловод_male": "AgACAgIAAxkBAAIEkGsCjcbM3MEns_hPt1gBQb3yTo1SAAIVG2sbLTMYSF9aqJi0NU5rAQADAgADeQADPQQ",
+    "Лазутчик_female": "AgACAgIAAxkBAAIEkmsCjdZACLpFXBBjpIXvz4pj_k04AAIWG2sbLTMYSOtH0onbtkNaAQADAgADeQADPQQ",
+    "Лазутчик_male": "AgACAgIAAxkBAAIElGsCjfK9-gTDB3V5XZhaM1_CWNMbAAIXG2sbLTMYSHk3NrW3tH9wAQADAgADeQADPQQ",
+    "Лич_female": "AgACAgIAAxkBAAIElmsCjgABQ1NMjssQe1OsnKNPPesL2AACGBtrGy0zGEgJsk1dODmSBwEAAwIAA3kAAz0E",
+    "Лич_male": "AgACAgIAAxkBAAIEmGsCjhZEDOIeQj63I7V6wjeu8MMkAAIZG2sbLTMYSMLFlD9tsLcZAQADAgADeQADPQQ",
+    "Магистр_female": "AgACAgIAAxkBAAIEmmsCjkP49tZfL7K8Ge1sMRiqnH4EAAIaG2sbLTMYSEdRMJ-pj2RSAQADAgADeQADPQQ",
+    "Магистр_male": "AgACAgIAAxkBAAIEnGsCjlzEHLe1dLxV-nM8S7n-ex4cAAIbG2sbLTMYSAv9sWSzncFYAQADAgADeQADPQQ",
+    "Маэстро_female": "AgACAgIAAxkBAAIEnmsCjmsIPra09x502zZoxOdB18ZaAAIcG2sbLTMYSCdoxbz8xKa8AQADAgADeAADPQQ",
+    "Маэстро_male": "AgACAgIAAxkBAAIEoGsCjoTwLyvfniLh6i91LdRfmAI3AAIdG2sbLTMYSH7L77rIRR_nAQADAgADeAADPQQ",
+    "Мистик_female": "AgACAgIAAxkBAAIEomsCjpNtZcz7CETjTQVLZ20FLCkzAAIeG2sbLTMYSPxxSUtxSpX-AQADAgADeQADPQQ",
+    "Мистик_male": "AgACAgIAAxkBAAIEpGsCjqc5Vms-__X9nmXFv4NiGRchAAIfG2sbLTMYSNtUqjnnnqcNAQADAgADeAADPQQ",
+    "Некромант_female": "AgACAgIAAxkBAAIEpmsCjrlrTEGsajSN99I0qLFc4V27AAIgG2sbLTMYSA6pzOnfg54IAQADAgADeQADPQQ",
+    "Некромант_male": "AgACAgIAAxkBAAIEqGsCjtXnHMK7jLZgfzMPNDrJz9iKAAIhG2sbLTMYSJ2eNu1l1-IbAQADAgADeQADPQQ",
+    "Ночной страж_female": "AgACAgIAAxkBAAIEqmsCjunewHH9NFiwsrOvZAJlM1lJAAIiG2sbLTMYSBZEcoBbKph9AQADAgADeQADPQQ",
+    "Ночной страж_male": "AgACAgIAAxkBAAIErGsCjxnmk8urXPSO_zR9NH4Kvr_PAAIjG2sbLTMYSAUjCqIh7gsPAQADAgADeAADPQQ",
+    "Паладин_female": "AgACAgIAAxkBAAIErmsCjykIMfTC06nUVPX013jXG-58AAIkG2sbLTMYSIrl2990Q7kZAQADAgADeQADPQQ",
+    "Паладин_male": "AgACAgIAAxkBAAIEsGsCjz-T7_RD1-6Np4ZpJN3dmurYAAIlG2sbLTMYSARjiZOWB4JCAQADAgADeQADPQQ",
+    "Палач_female": "AgACAgIAAxkBAAIEsmsCj1bl1zbRbR7gw8kAAfC_4STmyQACJxtrGy0zGEjFxg7mLiE27QEAAwIAA3kAAz0E",
+    "Палач_male": "AgACAgIAAxkBAAIEtGsCj3KMj9DTYcWcuPv4aCNcxQIVAAIoG2sbLTMYSJfp51DVskKbAQADAgADeQADPQQ",
+    "Пилигрим_female": "AgACAgIAAxkBAAIEtmsCj3_axhIHOOnogssnAzCNps7oAAIpG2sbLTMYSJT9FRfOU9pBAQADAgADeQADPQQ",
+    "Пилигрим_male": "AgACAgIAAxkBAAIEuGsCj5XgJ0yNKkDvUF7nDtfwKaLAAAIqG2sbLTMYSB_hR5ilFL76AQADAgADeAADPQQ",
+    "Призрак_female": "AgACAgIAAxkBAAIEumsCj6LTYAlFDfbbzQ-p3V96BrhrAAIrG2sbLTMYSBq6W17QRcaCAQADAgADeQADPQQ",
+    "Призрак_male": "AgACAgIAAxkBAAIEvGsCj7_GvSOqVX72ZGXwW0HC480_AAIsG2sbLTMYSBt9ly0pjqX-AQADAgADeQADPQQ",
+    "Призрачный охотник_female": "AgACAgIAAxkBAAIEvmsCj89Ft2gdsbjSvn8_GI-Z8M7zAAItG2sbLTMYSHlehTa0BxYhAQADAgADeQADPQQ",
+    "Призрачный охотник_male": "AgACAgIAAxkBAAIEwGsCj-hSj7LLe0EhJuP6AmCOQEQZAAIuG2sbLTMYSI1f-DwCmokNAQADAgADeQADPQQ",
+    "Провидец_female": "AgACAgIAAxkBAAIEwmsCj_p1BKhHPW5k4sTYKy-EyBqIAAIvG2sbLTMYSCw-Qm8ZBpKoAQADAgADeQADPQQ",
+    "Провидец_male": "AgACAgIAAxkBAAIExGsCkA7Z5EIAAf3PFwyfxngoBIN8MwACMRtrGy0zGEhPksJ5oAMB5wEAAwIAA3kAAz0E",
+    "Проповедник_female": "AgACAgIAAxkBAAIExmsCkBtyrrBZ5MqteLFy69JMc8BsAAIyG2sbLTMYSP5BKgyWdzrkAQADAgADeQADPQQ",
+    "Проповедник_male": "AgACAgIAAxkBAAIEyGsCkDGN1RZ-3dDzCle0CNYCwYl1AAIzG2sbLTMYSBGC53jpG3fRAQADAgADeQADPQQ",
+    "Рыцарь-механик_female": "AgACAgIAAxkBAAIEymsCkD5ZT0YXA-0w5TMGUMluA4ayAAI0G2sbLTMYSMTzX_SuTZIhAQADAgADeQADPQQ",
+    "Рыцарь-механик_male": "AgACAgIAAxkBAAIEzGsCkFho0IhdKBr7eWQZR50EiLm5AAI3G2sbLTMYSH1lze5MSg5-AQADAgADeQADPQQ",
+    "Садовник_female": "AgACAgIAAxkBAAIEzmsCkGNON6WKvldQw2WjwzT3IiXhAAI5G2sbLTMYSBDywWcFaESaAQADAgADeQADPQQ",
+    "Садовник_male": "AgACAgIAAxkBAAIE0GsCkIBWua3-rvXqRDfyrDB9ox8bAAI6G2sbLTMYSO3tutr4tZMNAQADAgADeQADPQQ",
+    "Скальд_female": "AgACAgIAAxkBAAIE0msCkI8uQh4ObkjYVVCUtpIrl9-MAAI7G2sbLTMYSF4KXaCFuhrwAQADAgADeQADPQQ",
+    "Скальд_male": "AgACAgIAAxkBAAIE1GsCkKavLEVzsFxRd4UmU1PhZqp5AAI8G2sbLTMYSM4Zt-kexpE1AQADAgADeQADPQQ",
+    "Странник_female": "AgACAgIAAxkBAAIE1msCkLgZhDHvbh99nkL2BRQybqVcAAI9G2sbLTMYSLvFyjcTRhJ6AQADAgADeQADPQQ",
+    "Странник_male": "AgACAgIAAxkBAAIE2GsCkMtlmxgpqBNgLytyve4AAZd9UQACPhtrGy0zGEjgHPmOnJb0cgEAAwIAA3kAAz0E",
+    "Судья_female": "AgACAgIAAxkBAAIE2msCkNkkBY8_K8Y_1SKJkaBeOCC_AAJAG2sbLTMYSHVhBKFJNbBoAQADAgADeQADPQQ",
+    "Судья_male": "AgACAgIAAxkBAAIE3GsCkO0dT_PiL9nJvkFHuOg7yMMIAAJBG2sbLTMYSA5C28YOsmTIAQADAgADeQADPQQ",
+    "Фанатик_female": "AgACAgIAAxkBAAIE3msCkP-YlN3n6EdllV6e8XH3xPkPAAJCG2sbLTMYSNmrR2YpWfIgAQADAgADeQADPQQ",
+    "Фанатик_male": "AgACAgIAAxkBAAIE4GsClp2sYuxHOgc9-y2jH5LAYq2tAAJTG2sbLTMYSApkilXIHBuwAQADAgADeQADPQQ",
+    "Хранитель леса_female": "AgACAgIAAxkBAAIE4msClq9Z9ogiqqGbkDT9KIotIPspAAJUG2sbLTMYSIA4nUPsw1UlAQADAgADeQADPQQ",
+    "Хранитель леса_male": "AgACAgIAAxkBAAIE5GsClsa7RuAv74klCSKMpMPUYxRaAAJVG2sbLTMYSPwEFpHt3cQ9AQADAgADeQADPQQ",
+    "Хранитель тайн_female": "AgACAgIAAxkBAAIE5msCltLjye5VurdTHi5Fuj5v5w5QAAJWG2sbLTMYSAaMv9cyTw9bAQADAgADeQADPQQ",
+    "Хранитель тайн_male": "AgACAgIAAxkBAAIE6GsClurXJ-NrG2NFiOZZKPEOfCUzAAJXG2sbLTMYSJFSiPAYJAgtAQADAgADeQADPQQ",
+    "Шаман_female": "AgACAgIAAxkBAAIE6msClvd-zysse7jdf4eQHS50ISYnAAJYG2sbLTMYSOBSD-Ds26N3AQADAgADeQADPQQ",
+    "Шаман_male": "AgACAgIAAxkBAAIE7GsClxpktWf-E01ESwzFl-OEGlx4AAJZG2sbLTMYSP6necBCTanVAQADAgADeQADPQQ",
+    "Элементалист_female": "AgACAgIAAxkBAAIE7msClykDzBVqN9QEZ-GsvPYHVVsmAAJaG2sbLTMYSGxHzZ2iAiwCAQADAgADeQADPQQ",
+    "Элементалист_male": "AgACAgIAAxkBAAIE8GsCl0Tfwr1iTPnJTb48CMsCwM_hAAJbG2sbLTMYSNRxhtTRsCxsAQADAgADeQADPQQ",
+    "Берсерк_female": "AgACAgIAAxkBAAIE9GsCmS7ckJFGwBCPFhZDrMsGMEYXAAJhG2sbLTMYSBzJtn0bR3eAAQADAgADeQADPQQ",
+    "Берсерк_male": "AgACAgIAAxkBAAIE9msCmUTtfGzgK0862PQvjJXY4NlpAAJiG2sbLTMYSO8YAh0BX-hbAQADAgADeQADPQQ",
+    "Страж границ_female": "AgACAgIAAxkBAAIE-GsCmo_8v2ciGsIjRtUX0qRLOjAIAAJkG2sbLTMYSPK6zIfmTyUzAQADAgADeQADPQQ",
+    "Страж границ_male": "AgACAgIAAxkBAAIE-msCmqm7RVAtBRxqkaHlyCUfX2qAAAJlG2sbLTMYSGhmuGSgGEp_AQADAgADeQADPQQ",
+    "Хранитель рощи_female": "AgACAgIAAxkBAAIE_GsCm7B2cxwVn6MFwbMm_GL6IbqfAAJmG2sbLTMYSHemcIF3pem-AQADAgADeQADPQQ",
+    "Хранитель рощи_male": "AgACAgIAAxkBAAIE_msCm8pqzZCQwQSHn9bu4BdIqe2iAAJnG2sbLTMYSMgQZOngyQl-AQADAgADeQADPQQ",
+    "Инквизитор_female": "AgACAgIAAxkBAAIFAAFrAp6r34OPRmNJixYQ5d5ooeWw8gACbBtrGy0zGEgu8LMT1PYrpgEAAwIAA3kAAz0E",
+    "Инквизитор_male": "AgACAgIAAxkBAAIFAmsCnsyqaepFlFeA6dp7T5EDR5ZHAAJtG2sbLTMYSKebc9TgVik-AQADAgADeQADPQQ"
+}
+
 def clean_city(text):
     if not text: return ""
     text = text.lower().strip()
@@ -53,6 +145,11 @@ TURN_TIMEOUT_SECONDS = 300
 MAX_PREMIUM_USERS_FIRST_1000 = 1000
 
 logging.basicConfig(level=logging.INFO)
+
+# ========== БОТ ==========
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+dp = Dispatcher()
+
 # ========== ПОДЗЕМЕЛЬЯ ==========
 DUNGEONS = {}
 
@@ -2740,6 +2837,67 @@ QUIZ = [
     },
 ]
 
+QUIZ_SCORES = {}
+
+def _uid_from(target) -> int:
+    if isinstance(target, CallbackQuery):
+        return target.from_user.id
+    if target.from_user:
+        return target.from_user.id
+    return target.chat.id
+
+async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSMContext = None):
+    _uid = _uid_from(target)
+    if scores is None:
+        scores = {c: 0 for c in ALL_BASE_CLASSES}
+        
+    if q_idx >= len(QUIZ):
+        cls_name, cls_desc = get_hybrid_class(scores)
+        u = get_user(_uid)
+        if u:
+            u.class_name = cls_name
+            save_user(u)
+            text = f"🎉 Твой класс: <b>{cls_name}</b>\n\n{cls_desc}\n\nТеперь выбери свои интересы (теги)."
+            if isinstance(target, CallbackQuery):
+                await target.message.edit_text(text)
+            else:
+                await target.answer(text)
+            QUIZ_SCORES.pop(_uid, None)
+            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=False)
+            await send_tag_question(target, state)
+        else:
+            QUIZ_SCORES.pop(_uid, None)
+    else:
+        q = QUIZ[q_idx]
+        text = f"🎯 <b>Вопрос {q_idx+1}/{len(QUIZ)}</b>\n\n{q['text']}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=opt_text[:60], callback_data=f"quiz_{q_idx}_{i}")]
+            for i, (opt_text, cls) in enumerate(q["options"])
+        ])
+        if isinstance(target, CallbackQuery):
+            await target.message.edit_text(text, reply_markup=kb)
+        else:
+            await target.answer(text, reply_markup=kb)
+        QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
+
+
+@dp.callback_query(F.data.startswith("quiz_"))
+async def cb_quiz(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    _, q_s, opt_s = cb.data.split("_")
+    q_i, opt_i = int(q_s), int(opt_s)
+    st = QUIZ_SCORES.get(cb.from_user.id)
+    
+    if not st or st["idx"] != q_i:
+        await cb.answer("Устарело, начни заново", show_alert=True)
+        return
+        
+    scores = st["scores"]
+    cls = QUIZ[q_i]["options"][opt_i][1]
+    scores[cls] = scores.get(cls, 0) + 1
+    
+    await send_quiz_question(cb, q_i + 1, scores, state)
+
 # ========== ТЕГИ ==========
 TAG_QUESTIONS = [
     {"category": "Развлечения", "question": "🎮 Как ты обычно проводишь свободное время?", "tags": ["Видеоигры", "Фильмы", "Книги", "Музыка", "Рисование", "Настольные игры"]},
@@ -2787,9 +2945,6 @@ class Exchange(StatesGroup):
 class AdminState(StatesGroup): 
     broadcast = State()
 
-# ========== БОТ ==========
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-dp = Dispatcher()
 
 # ========== КЛАВИАТУРЫ ==========
 def kb_consent():
@@ -3022,8 +3177,7 @@ async def reg_mayak(msg: Message, state: FSMContext):
     u = get_user(msg.from_user.id)
     u.mayak = text
     save_user(u)
-    
-    # ЗАПУСКАЕМ КВИЗ СРАЗУ ПОСЛЕ ТРЕБОВАНИЯ
+
     await msg.answer("🎯 Отлично! Теперь короткий квиз на класс (5 вопросов).")
     await send_quiz_question(msg, 0, {c: 0 for c in ALL_BASE_CLASSES}, state)
 
@@ -3035,18 +3189,61 @@ async def cb_profile(cb: CallbackQuery):
     if not u or not u.consent_given:
         await cb.message.edit_text("Сначала /start")
         return
-    await cb.message.edit_text(render_profile(u), reply_markup=kb_profile())
+    
+    # Определяем картинку для профиля
+    clean_class_name = u.class_name.split(" ")[-1]
+    gender_str = u.gender if u.gender else "male"
+    img_key = f"{clean_class_name}_{gender_str}"
+    
+    text = render_profile(u)
+    
+    await cb.message.delete() # Удаляем старое сообщение
+    
+    if img_key in CLASS_IMAGES:
+        try:
+            await bot.send_photo(
+                chat_id=cb.from_user.id, 
+                photo=CLASS_IMAGES[img_key], 
+                caption=text, 
+                reply_markup=kb_profile()
+            )
+            return
+        except Exception as e:
+            logging.error(f"Ошибка фото в профиле: {e}")
+            
+    await bot.send_message(cb.from_user.id, text, reply_markup=kb_profile())
 
 @dp.callback_query(F.data == "menu_back")
 async def cb_back(cb: CallbackQuery):
     await cb.answer()
     u = get_user(cb.from_user.id)
-    await cb.message.edit_text(render_profile(u), reply_markup=kb_main())
+    
+    clean_class_name = u.class_name.split(" ")[-1]
+    gender_str = u.gender if u.gender else "male"
+    img_key = f"{clean_class_name}_{gender_str}"
+    
+    text = render_profile(u)
+    await cb.message.delete()
+    
+    if img_key in CLASS_IMAGES:
+        try:
+            await bot.send_photo(
+                chat_id=cb.from_user.id, 
+                photo=CLASS_IMAGES[img_key], 
+                caption=text, 
+                reply_markup=kb_main()
+            )
+            return
+        except Exception as e:
+            logging.error(f"Ошибка фото в меню: {e}")
+            
+    await bot.send_message(cb.from_user.id, text, reply_markup=kb_main())
 
 @dp.callback_query(F.data == "menu_help")
 async def cb_help(cb: CallbackQuery):
     await cb.answer()
-    await cb.message.edit_text(
+    await cb.message.delete()
+    await cb.message.answer(
         "❓ <b>Помощь</b>\n\n"
         "🔍 Найти напарника — ищем по городу, возрасту ±2 и общим тегам.\n"
         "🎁 Ежедневный вход — получай опыт за стрик.\n"
@@ -3055,7 +3252,37 @@ async def cb_help(cb: CallbackQuery):
         "/reset /delete_me /support /privacy",
         reply_markup=kb_main(),
     )
-
+    
+@dp.callback_query(F.data == "menu_daily")
+async def cb_daily(cb: CallbackQuery):
+    await cb.answer()
+    u = get_user(cb.from_user.id)
+    now = datetime.datetime.utcnow()
+    last = u.last_daily
+    
+    if last and (now - last).total_seconds() < 86400:
+        await cb.answer("Ты уже забирал награду сегодня. Приходи завтра!", show_alert=True)
+        return
+        
+    if last and (now - last).total_seconds() < 172800:
+        u.daily_streak += 1
+    else:
+        u.daily_streak = 1
+        
+    reward = min(10 + (u.daily_streak - 1) * 10, 50)
+    u.experience += reward
+    u.last_daily = now
+    save_user(u)
+    
+    await cb.message.delete() # Удаляем старое фото профиля
+    await cb.message.answer(
+        f"🎁 <b>Ежедневный вход!</b>\n\n"
+        f"🔥 Стрик: {u.daily_streak} дней\n"
+        f"✨ +{reward} опыта\n\n"
+        f"{render_profile(u)}",
+        reply_markup=kb_main(),
+    )
+    
 # ========== КОМАНДЫ И РЕДАКТИРОВАНИЕ ==========
 @dp.message(Command("reset"))
 async def cmd_reset(msg: Message, state: FSMContext):
@@ -3085,7 +3312,8 @@ async def cmd_privacy(msg: Message):
 @dp.callback_query(F.data == "menu_edit")
 async def cb_edit(cb: CallbackQuery):
     await cb.answer()
-    await cb.message.edit_text("✏️ Что меняем?", reply_markup=kb_edit())
+    await cb.message.delete()
+    await cb.message.answer("✏️ Что меняем?", reply_markup=kb_edit())
 
 @dp.callback_query(F.data.startswith("edit_"))
 async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
@@ -3094,7 +3322,8 @@ async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
     
     if field == "quiz":
         await state.update_data(is_editing=True)
-        await cb.message.edit_text("🎯 Запускаю квиз на класс (5 вопросов).")
+        await cb.message.delete()
+        await cb.message.answer("🎯 Запускаю квиз на класс (5 вопросов).")
         await send_quiz_question(cb, 0, {c: 0 for c in ALL_BASE_CLASSES}, state)
         return
 
@@ -3105,7 +3334,8 @@ async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
         
     if field == "borders":
         await state.update_data(rf_chosen=[], is_editing=True)
-        await cb.message.edit_text(
+        await cb.message.delete()
+        await cb.message.answer(
             "🚩 <b>Рэд флаги</b>\n\nВыбери до 2:",
             reply_markup=kb_red_flags(set()),
         )
@@ -3119,7 +3349,8 @@ async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
         "city": "Новый город:",
         "mayak": "Новое требование к напарнику (5–200 символов):",
     }
-    await cb.message.edit_text(prompts.get(field, "Введи значение:"))
+    await cb.message.delete()
+    await cb.message.answer(prompts.get(field, "Введи значение:"))
     await state.set_state(Edit.field)
 
 @dp.message(Edit.field)
@@ -3287,10 +3518,10 @@ async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
     
     if is_editing:
         await cb.message.edit_text("✅ Рэд флаги обновлены!", reply_markup=kb_main())
-        await cb.message.answer(render_profile(u), reply_markup=kb_profile())
-    else:
-        await cb.message.edit_text("🎉 Регистрация завершена! Открываю профиль...")
-        await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
+        return
+        
+    # Просто вызываем показ профиля (он сам разберется с картинкой)
+    await cb_profile(cb)
 
 QUIZ_SCORES = {}
 
@@ -3318,7 +3549,7 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
             else:
                 await target.answer(text)
             QUIZ_SCORES.pop(_uid, None)
-            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
+            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=False)
             await send_tag_question(target, state)
         else:
             QUIZ_SCORES.pop(_uid, None)
@@ -3560,7 +3791,7 @@ async def cb_rf_toggle(cb: CallbackQuery, state: FSMContext):
         chosen.add(i)
     await state.update_data(rf_chosen=list(chosen))
     await cb.message.edit_reply_markup(reply_markup=kb_red_flags(chosen))
-
+    
 @dp.callback_query(F.data == "rf_ok", Reg.red_flags)
 async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
@@ -3576,6 +3807,25 @@ async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
         await cb.message.edit_text("✅ Рэд флаги обновлены!", reply_markup=kb_main())
         await cb.message.answer(render_profile(u), reply_markup=kb_profile())
     else:
+        # Проверяем наличие картинки
+        gender_str = u.gender if u.gender else "male"
+        img_key = f"{u.class_name}_{gender_str}"
+        
+        if img_key in CLASS_IMAGES:
+            try:
+                await cb.message.delete() # Удаляем сообщение "Регистрация завершена"
+                await bot.send_photo(
+                    chat_id=cb.from_user.id,
+                    photo=CLASS_IMAGES[img_key],
+                    caption=f"🎉 Регистрация завершена! Твой класс: <b>{u.class_name}</b>",
+                    reply_markup=kb_main()
+                )
+                await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
+                return
+            except Exception as e:
+                logging.error(f"Ошибка отправки фото: {e}")
+        
+        # Если картинки нет (или произошла ошибка) — шлем текст, как раньше
         await cb.message.edit_text("🎉 Регистрация завершена! Открываю профиль...")
         await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
 
@@ -3599,7 +3849,7 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
             if isinstance(target, CallbackQuery): await target.message.edit_text(text)
             else: await target.answer(text)
             QUIZ_SCORES.pop(_uid, None)
-            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[])
+            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=False)
             await send_tag_question(target, state)
         else:
             QUIZ_SCORES.pop(_uid, None)
@@ -3629,19 +3879,36 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
 async def cb_search(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     u = get_user(cb.from_user.id)
+    
+    if u.status == "searching":
+        await cb.answer("Уже в поиске!", show_alert=True)
+        return
+        
+    if u.status == "dungeon":
+        await cb.answer("Ты сейчас в рейде!", show_alert=True)
+        return
+
     if not is_user_ready_full(u):
-        await cb.message.edit_text("❌ Сначала заполни анкету (/start).", reply_markup=kb_main())
+        try: await cb.message.delete()
+        except: pass
+        await cb.message.answer("❌ Сначала заполни анкету (/start).", reply_markup=kb_main())
         return
 
     u.status = "searching"
     save_user(u)
-    
-    msg = await cb.message.edit_text(
+
+    try:
+        await cb.message.delete()
+    except: pass
+
+    msg = await cb.message.answer(
         "🔍 <b>Ищем напарника...</b>\n\nСтрогий поиск (город, возраст, интересы). Ждём 10 секунд...",
         reply_markup=kb_cancel_search()
     )
     
+    # ВОТ ЭТА СТРОЧКА ЗАПУСКАЕТ ПОИСК
     asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
+
 
 async def update_search_msg(chat_id, msg_id, text, markup):
     try:
@@ -3649,32 +3916,45 @@ async def update_search_msg(chat_id, msg_id, text, markup):
     except Exception:
         pass
 
+
 async def search_process(tg_id: int, chat_id: int, msg_id: int):
     try:
         await asyncio.sleep(10)
         u = get_user(tg_id)
-        if not u or u.status != "searching": return
+        if not u or u.status != "searching":
+            try: await bot.delete_message(chat_id, msg_id)
+            except: pass
+            return
         partner = await find_partner(tg_id, "strict", True)
         if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
 
         await update_search_msg(chat_id, msg_id, "🔍 <b>Ищем напарника...</b>\n\nРасширяем поиск (город, возраст). Ждём ещё 10 секунд...", kb_cancel_search())
         await asyncio.sleep(10)
         u = get_user(tg_id)
-        if not u or u.status != "searching": return
+        if not u or u.status != "searching":
+            try: await bot.delete_message(chat_id, msg_id)
+            except: pass
+            return
         partner = await find_partner(tg_id, "strict", False)
         if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
 
         await update_search_msg(chat_id, msg_id, "🔍 <b>Ищем напарника...</b>\n\nРасширяем поиск (только город). Ждём ещё 10 секунд...", kb_cancel_search())
         await asyncio.sleep(10)
         u = get_user(tg_id)
-        if not u or u.status != "searching": return
+        if not u or u.status != "searching":
+            try: await bot.delete_message(chat_id, msg_id)
+            except: pass
+            return
         partner = await find_partner(tg_id, "city", False)
         if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
 
         await update_search_msg(chat_id, msg_id, "🔍 <b>Ищем напарника...</b>\n\nИщем по всей базе. Последняя попытка...", kb_cancel_search())
         await asyncio.sleep(10)
         u = get_user(tg_id)
-        if not u or u.status != "searching": return
+        if not u or u.status != "searching":
+            try: await bot.delete_message(chat_id, msg_id)
+            except: pass
+            return
         partner = await find_partner(tg_id, "any", False)
         if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
 
@@ -3690,8 +3970,7 @@ async def search_process(tg_id: int, chat_id: int, msg_id: int):
         if u and u.status == "searching":
             u.status = "idle"
             save_user(u)
-            await update_search_msg(chat_id, msg_id, f"❌ Ошибка: {e}", kb_main())
-
+            await update_search_msg(chat_id, msg_id, f"❌ Ошибка поиска: {e}", kb_main())
 @dp.callback_query(F.data == "menu_cancel_search")
 async def cb_cancel_search(cb: CallbackQuery):
     await cb.answer("Поиск отменен")
@@ -3699,12 +3978,15 @@ async def cb_cancel_search(cb: CallbackQuery):
     if u and u.status == "searching":
         u.status = "idle"
         save_user(u)
-    await cb.message.edit_text("Поиск отменен. Возвращайся в меню!", reply_markup=kb_main())
+    try:
+        await cb.message.delete()
+    except: pass
 
 async def find_partner(tg_id: int, mode: str, with_tags: bool):
     with SessionLocal() as s:
         u = s.query(User).filter_by(tg_id=tg_id).first()
         if not u: return None
+        
         my_tags = {t.tag for t in s.query(UserTag).filter_by(user_id=tg_id).all()}
         
         query = s.query(User).filter(
@@ -3723,10 +4005,8 @@ async def find_partner(tg_id: int, mode: str, with_tags: bool):
             c_city = clean_city(c.city)
             
             if mode in ["strict", "city"]:
-                # Если города не совпадают на 100%, проверяем их схожесть (fuzzy matching)
                 if c_city != target_city:
                     similarity = difflib.SequenceMatcher(None, target_city, c_city).ratio()
-                    # Если совпадение меньше 75% (например, "москва" и "масква" дают ~83%), пропускаем
                     if similarity < 0.75:
                         continue
                     
@@ -3737,22 +4017,23 @@ async def find_partner(tg_id: int, mode: str, with_tags: bool):
                     
             return c
     return None
-
 async def start_dungeon_with(u: User, partner: User, chat_id: int, msg_id: int):
     with SessionLocal() as s:
         p_check = s.query(User).filter_by(tg_id=partner.tg_id).first()
         u_check = s.query(User).filter_by(tg_id=u.tg_id).first()
-        
+
         if not p_check or p_check.status not in ["idle", "searching"]:
             if u_check and u_check.status == "searching":
                 u_check.status = "idle"
                 s.commit()
                 await update_search_msg(chat_id, msg_id, "Напарник только что нашел другого. Попробуй еще раз.", kb_main())
             return
-            
+
         if not u_check or u_check.status != "searching":
+            try: await bot.delete_message(chat_id, msg_id)
+            except: pass
             return
-            
+
         theme_key = random.choice(list(DUNGEONS.keys()))
         ds = DungeonSession(
             player1_tg_id=u.tg_id,
@@ -4128,6 +4409,7 @@ async def do_broadcast(msg: Message, state: FSMContext):
             
     await state.clear()
     await msg.answer(f"✅ Рассылка завершена! Успешно доставлено: {success} из {len(user_ids)}.")
+    
     
 # ========== ВЕБ-СЕРВЕР И ЗАПУСК ==========
 async def health_check(request):
