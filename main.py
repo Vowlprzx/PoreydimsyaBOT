@@ -3242,7 +3242,8 @@ async def cb_back(cb: CallbackQuery):
 @dp.callback_query(F.data == "menu_help")
 async def cb_help(cb: CallbackQuery):
     await cb.answer()
-    await cb.message.edit_text(
+    await cb.message.delete()
+    await cb.message.answer(
         "❓ <b>Помощь</b>\n\n"
         "🔍 Найти напарника — ищем по городу, возрасту ±2 и общим тегам.\n"
         "🎁 Ежедневный вход — получай опыт за стрик.\n"
@@ -3251,7 +3252,37 @@ async def cb_help(cb: CallbackQuery):
         "/reset /delete_me /support /privacy",
         reply_markup=kb_main(),
     )
-
+    
+@dp.callback_query(F.data == "menu_daily")
+async def cb_daily(cb: CallbackQuery):
+    await cb.answer()
+    u = get_user(cb.from_user.id)
+    now = datetime.datetime.utcnow()
+    last = u.last_daily
+    
+    if last and (now - last).total_seconds() < 86400:
+        await cb.answer("Ты уже забирал награду сегодня. Приходи завтра!", show_alert=True)
+        return
+        
+    if last and (now - last).total_seconds() < 172800:
+        u.daily_streak += 1
+    else:
+        u.daily_streak = 1
+        
+    reward = min(10 + (u.daily_streak - 1) * 10, 50)
+    u.experience += reward
+    u.last_daily = now
+    save_user(u)
+    
+    await cb.message.delete() # Удаляем старое фото профиля
+    await cb.message.answer(
+        f"🎁 <b>Ежедневный вход!</b>\n\n"
+        f"🔥 Стрик: {u.daily_streak} дней\n"
+        f"✨ +{reward} опыта\n\n"
+        f"{render_profile(u)}",
+        reply_markup=kb_main(),
+    )
+    
 # ========== КОМАНДЫ И РЕДАКТИРОВАНИЕ ==========
 @dp.message(Command("reset"))
 async def cmd_reset(msg: Message, state: FSMContext):
@@ -3281,7 +3312,8 @@ async def cmd_privacy(msg: Message):
 @dp.callback_query(F.data == "menu_edit")
 async def cb_edit(cb: CallbackQuery):
     await cb.answer()
-    await cb.message.edit_text("✏️ Что меняем?", reply_markup=kb_edit())
+    await cb.message.delete()
+    await cb.message.answer("✏️ Что меняем?", reply_markup=kb_edit())
 
 @dp.callback_query(F.data.startswith("edit_"))
 async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
@@ -3290,7 +3322,8 @@ async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
     
     if field == "quiz":
         await state.update_data(is_editing=True)
-        await cb.message.edit_text("🎯 Запускаю квиз на класс (5 вопросов).")
+        await cb.message.delete()
+        await cb.message.answer("🎯 Запускаю квиз на класс (5 вопросов).")
         await send_quiz_question(cb, 0, {c: 0 for c in ALL_BASE_CLASSES}, state)
         return
 
@@ -3301,7 +3334,8 @@ async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
         
     if field == "borders":
         await state.update_data(rf_chosen=[], is_editing=True)
-        await cb.message.edit_text(
+        await cb.message.delete()
+        await cb.message.answer(
             "🚩 <b>Рэд флаги</b>\n\nВыбери до 2:",
             reply_markup=kb_red_flags(set()),
         )
@@ -3315,7 +3349,8 @@ async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
         "city": "Новый город:",
         "mayak": "Новое требование к напарнику (5–200 символов):",
     }
-    await cb.message.edit_text(prompts.get(field, "Введи значение:"))
+    await cb.message.delete()
+    await cb.message.answer(prompts.get(field, "Введи значение:"))
     await state.set_state(Edit.field)
 
 @dp.message(Edit.field)
@@ -3845,67 +3880,19 @@ async def cb_search(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     u = get_user(cb.from_user.id)
     if not is_user_ready_full(u):
-        await cb.message.edit_text("❌ Сначала заполни анкету (/start).", reply_markup=kb_main())
+        await cb.message.delete()
+        await cb.message.answer("❌ Сначала заполни анкету (/start).", reply_markup=kb_main())
         return
 
     u.status = "searching"
     save_user(u)
     
-    msg = await cb.message.edit_text(
+    await cb.message.delete() # Удаляем фото профиля
+    msg = await cb.message.answer(
         "🔍 <b>Ищем напарника...</b>\n\nСтрогий поиск (город, возраст, интересы). Ждём 10 секунд...",
         reply_markup=kb_cancel_search()
     )
-    
     asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
-
-async def update_search_msg(chat_id, msg_id, text, markup):
-    try:
-        await bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id, reply_markup=markup)
-    except Exception:
-        pass
-
-async def search_process(tg_id: int, chat_id: int, msg_id: int):
-    try:
-        await asyncio.sleep(10)
-        u = get_user(tg_id)
-        if not u or u.status != "searching": return
-        partner = await find_partner(tg_id, "strict", True)
-        if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
-
-        await update_search_msg(chat_id, msg_id, "🔍 <b>Ищем напарника...</b>\n\nРасширяем поиск (город, возраст). Ждём ещё 10 секунд...", kb_cancel_search())
-        await asyncio.sleep(10)
-        u = get_user(tg_id)
-        if not u or u.status != "searching": return
-        partner = await find_partner(tg_id, "strict", False)
-        if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
-
-        await update_search_msg(chat_id, msg_id, "🔍 <b>Ищем напарника...</b>\n\nРасширяем поиск (только город). Ждём ещё 10 секунд...", kb_cancel_search())
-        await asyncio.sleep(10)
-        u = get_user(tg_id)
-        if not u or u.status != "searching": return
-        partner = await find_partner(tg_id, "city", False)
-        if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
-
-        await update_search_msg(chat_id, msg_id, "🔍 <b>Ищем напарника...</b>\n\nИщем по всей базе. Последняя попытка...", kb_cancel_search())
-        await asyncio.sleep(10)
-        u = get_user(tg_id)
-        if not u or u.status != "searching": return
-        partner = await find_partner(tg_id, "any", False)
-        if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
-
-        u = get_user(tg_id)
-        if u and u.status == "searching":
-            u.status = "idle"
-            save_user(u)
-            await update_search_msg(chat_id, msg_id, "🔍 Пока никого не нашли. Попробуй позже — база растёт!", kb_main())
-
-    except Exception as e:
-        logging.error(f"Ошибка в поиске: {e}")
-        u = get_user(tg_id)
-        if u and u.status == "searching":
-            u.status = "idle"
-            save_user(u)
-            await update_search_msg(chat_id, msg_id, f"❌ Ошибка: {e}", kb_main())
 
 @dp.callback_query(F.data == "menu_cancel_search")
 async def cb_cancel_search(cb: CallbackQuery):
