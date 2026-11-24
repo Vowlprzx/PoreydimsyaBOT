@@ -3879,21 +3879,93 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
 async def cb_search(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     u = get_user(cb.from_user.id)
+    
+    if u.status == "searching":
+        await cb.answer("Уже в поиске!", show_alert=True)
+        return
+        
+    if u.status == "dungeon":
+        await cb.answer("Ты сейчас в рейде!", show_alert=True)
+        return
+
     if not is_user_ready_full(u):
-        await cb.message.delete()
+        try: await cb.message.delete()
+        except: pass
         await cb.message.answer("❌ Сначала заполни анкету (/start).", reply_markup=kb_main())
         return
 
     u.status = "searching"
     save_user(u)
-    
-    await cb.message.delete() # Удаляем фото профиля
+
+    try:
+        await cb.message.delete()
+    except: pass
+
     msg = await cb.message.answer(
         "🔍 <b>Ищем напарника...</b>\n\nСтрогий поиск (город, возраст, интересы). Ждём 10 секунд...",
         reply_markup=kb_cancel_search()
     )
     asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
+    async def update_search_msg(chat_id, msg_id, text, markup):
+    try:
+        await bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id, reply_markup=markup)
+    except Exception:
+        pass
 
+async def search_process(tg_id: int, chat_id: int, msg_id: int):
+    try:
+        await asyncio.sleep(10)
+        u = get_user(tg_id)
+        if not u or u.status != "searching":
+            try: await bot.delete_message(chat_id, msg_id)
+            except: pass
+            return
+        partner = await find_partner(tg_id, "strict", True)
+        if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
+
+        await update_search_msg(chat_id, msg_id, "🔍 <b>Ищем напарника...</b>\n\nРасширяем поиск (город, возраст). Ждём ещё 10 секунд...", kb_cancel_search())
+        await asyncio.sleep(10)
+        u = get_user(tg_id)
+        if not u or u.status != "searching":
+            try: await bot.delete_message(chat_id, msg_id)
+            except: pass
+            return
+        partner = await find_partner(tg_id, "strict", False)
+        if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
+
+        await update_search_msg(chat_id, msg_id, "🔍 <b>Ищем напарника...</b>\n\nРасширяем поиск (только город). Ждём ещё 10 секунд...", kb_cancel_search())
+        await asyncio.sleep(10)
+        u = get_user(tg_id)
+        if not u or u.status != "searching":
+            try: await bot.delete_message(chat_id, msg_id)
+            except: pass
+            return
+        partner = await find_partner(tg_id, "city", False)
+        if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
+
+        await update_search_msg(chat_id, msg_id, "🔍 <b>Ищем напарника...</b>\n\nИщем по всей базе. Последняя попытка...", kb_cancel_search())
+        await asyncio.sleep(10)
+        u = get_user(tg_id)
+        if not u or u.status != "searching":
+            try: await bot.delete_message(chat_id, msg_id)
+            except: pass
+            return
+        partner = await find_partner(tg_id, "any", False)
+        if partner: return await start_dungeon_with(u, partner, chat_id, msg_id)
+
+        u = get_user(tg_id)
+        if u and u.status == "searching":
+            u.status = "idle"
+            save_user(u)
+            await update_search_msg(chat_id, msg_id, "🔍 Пока никого не нашли. Попробуй позже — база растёт!", kb_main())
+
+    except Exception as e:
+        logging.error(f"Ошибка в поиске: {e}")
+        u = get_user(tg_id)
+        if u and u.status == "searching":
+            u.status = "idle"
+            save_user(u)
+            await update_search_msg(chat_id, msg_id, f"❌ Ошибка поиска: {e}", kb_main())
 @dp.callback_query(F.data == "menu_cancel_search")
 async def cb_cancel_search(cb: CallbackQuery):
     await cb.answer("Поиск отменен")
@@ -3901,19 +3973,10 @@ async def cb_cancel_search(cb: CallbackQuery):
     if u and u.status == "searching":
         u.status = "idle"
         save_user(u)
-    await cb.message.edit_text("Поиск отменен. Возвращайся в меню!", reply_markup=kb_main())
-
-async def find_partner(tg_id: int, mode: str, with_tags: bool):
-    with SessionLocal() as s:
-        u = s.query(User).filter_by(tg_id=tg_id).first()
-        if not u: return None
-        my_tags = {t.tag for t in s.query(UserTag).filter_by(user_id=tg_id).all()}
-        
-        query = s.query(User).filter(
-            User.tg_id != tg_id, 
-            User.status.in_(["idle", "searching"]), 
-            User.consent_given == True
-        )
+    try:
+        await cb.message.delete()
+    except: pass
+    await cb.message.answer("Поиск отменен. Возвращайся в меню!", reply_markup=kb_main()
         
         if mode == "strict":
             query = query.filter(User.age.between(u.age - 2, u.age + 2))
@@ -3944,17 +4007,20 @@ async def start_dungeon_with(u: User, partner: User, chat_id: int, msg_id: int):
     with SessionLocal() as s:
         p_check = s.query(User).filter_by(tg_id=partner.tg_id).first()
         u_check = s.query(User).filter_by(tg_id=u.tg_id).first()
-        
+
         if not p_check or p_check.status not in ["idle", "searching"]:
             if u_check and u_check.status == "searching":
                 u_check.status = "idle"
                 s.commit()
                 await update_search_msg(chat_id, msg_id, "Напарник только что нашел другого. Попробуй еще раз.", kb_main())
             return
-            
+
+        # Если второй игрок уже нашел пару, просто удаляем его сообщение "Ищем..."
         if not u_check or u_check.status != "searching":
+            try: await bot.delete_message(chat_id, msg_id)
+            except: pass
             return
-            
+
         theme_key = random.choice(list(DUNGEONS.keys()))
         ds = DungeonSession(
             player1_tg_id=u.tg_id,
