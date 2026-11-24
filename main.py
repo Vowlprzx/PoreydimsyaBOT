@@ -3983,6 +3983,19 @@ async def cb_cancel_search(cb: CallbackQuery):
     except: pass
     await cb.message.answer("Поиск отменен. Возвращайся в меню!", reply_markup=kb_main())
         
+      async def find_partner(tg_id: int, mode: str, with_tags: bool):
+    with SessionLocal() as s:
+        u = s.query(User).filter_by(tg_id=tg_id).first()
+        if not u: return None
+        
+        my_tags = {t.tag for t in s.query(UserTag).filter_by(user_id=tg_id).all()}
+        
+        query = s.query(User).filter(
+            User.tg_id != tg_id, 
+            User.status.in_(["idle", "searching"]), 
+            User.consent_given == True
+        )
+        
         if mode == "strict":
             query = query.filter(User.age.between(u.age - 2, u.age + 2))
             
@@ -3993,10 +4006,8 @@ async def cb_cancel_search(cb: CallbackQuery):
             c_city = clean_city(c.city)
             
             if mode in ["strict", "city"]:
-                # Если города не совпадают на 100%, проверяем их схожесть (fuzzy matching)
                 if c_city != target_city:
                     similarity = difflib.SequenceMatcher(None, target_city, c_city).ratio()
-                    # Если совпадение меньше 75% (например, "москва" и "масква" дают ~83%), пропускаем
                     if similarity < 0.75:
                         continue
                     
