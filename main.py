@@ -3981,7 +3981,7 @@ async def cb_cancel_search(cb: CallbackQuery):
     try:
         await cb.message.delete()
     except: pass
-    await cb.message.answer("Поиск отменен. Возвращайся в меню!", reply_markup=kb_main()
+    await cb.message.answer("Поиск отменен. Возвращайся в меню!", reply_markup=kb_main())
         
         if mode == "strict":
             query = query.filter(User.age.between(u.age - 2, u.age + 2))
