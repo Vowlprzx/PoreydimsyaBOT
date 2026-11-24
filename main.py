@@ -3905,8 +3905,7 @@ async def cb_search(cb: CallbackQuery, state: FSMContext):
         "🔍 <b>Ищем напарника...</b>\n\nСтрогий поиск (город, возраст, интересы). Ждём 10 секунд...",
         reply_markup=kb_cancel_search()
     )
-    asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
-    async def update_search_msg(chat_id, msg_id, text, markup):
+ async def update_search_msg(chat_id, msg_id, text, markup):
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id, reply_markup=markup)
     except Exception:
