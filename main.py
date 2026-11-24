@@ -3981,9 +3981,8 @@ async def cb_cancel_search(cb: CallbackQuery):
     try:
         await cb.message.delete()
     except: pass
-    await cb.message.answer("Поиск отменен. Возвращайся в меню!", reply_markup=kb_main())
-        
-      async def find_partner(tg_id: int, mode: str, with_tags: bool):
+
+async def find_partner(tg_id: int, mode: str, with_tags: bool):
     with SessionLocal() as s:
         u = s.query(User).filter_by(tg_id=tg_id).first()
         if not u: return None
@@ -4018,7 +4017,6 @@ async def cb_cancel_search(cb: CallbackQuery):
                     
             return c
     return None
-
 async def start_dungeon_with(u: User, partner: User, chat_id: int, msg_id: int):
     with SessionLocal() as s:
         p_check = s.query(User).filter_by(tg_id=partner.tg_id).first()
@@ -4031,7 +4029,6 @@ async def start_dungeon_with(u: User, partner: User, chat_id: int, msg_id: int):
                 await update_search_msg(chat_id, msg_id, "Напарник только что нашел другого. Попробуй еще раз.", kb_main())
             return
 
-        # Если второй игрок уже нашел пару, просто удаляем его сообщение "Ищем..."
         if not u_check or u_check.status != "searching":
             try: await bot.delete_message(chat_id, msg_id)
             except: pass
