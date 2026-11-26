@@ -3299,15 +3299,19 @@ async def cb_profile(cb: CallbackQuery):
         await cb.message.edit_text("Сначала /start")
         return
     
-    # Определяем картинку для профиля
     clean_class_name = u.class_name.split(" ")[-1]
     gender_str = u.gender if u.gender else "male"
     img_key = f"{clean_class_name}_{gender_str}"
     
     text = render_profile(u)
     
-    await cb.message.delete() # Удаляем старое сообщение
-    
+    # Безопасное удаление старого сообщения
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
+        
+    # Пытаемся отправить фото
     if img_key in CLASS_IMAGES:
         try:
             await bot.send_photo(
@@ -3320,6 +3324,7 @@ async def cb_profile(cb: CallbackQuery):
         except Exception as e:
             logging.error(f"Ошибка фото в профиле: {e}")
             
+    # Если фото нет или произошла ошибка — шлем просто текст
     await bot.send_message(cb.from_user.id, text, reply_markup=kb_profile())
 
 @dp.callback_query(F.data == "menu_back")
@@ -3332,8 +3337,13 @@ async def cb_back(cb: CallbackQuery):
     img_key = f"{clean_class_name}_{gender_str}"
     
     text = render_profile(u)
-    await cb.message.delete()
     
+    # Безопасное удаление
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
+        
     if img_key in CLASS_IMAGES:
         try:
             await bot.send_photo(
@@ -3347,7 +3357,7 @@ async def cb_back(cb: CallbackQuery):
             logging.error(f"Ошибка фото в меню: {e}")
             
     await bot.send_message(cb.from_user.id, text, reply_markup=kb_main())
-
+    
 @dp.callback_query(F.data == "menu_help")
 async def cb_help(cb: CallbackQuery):
     await cb.answer()
@@ -3383,7 +3393,11 @@ async def cb_daily(cb: CallbackQuery):
     u.last_daily = now
     save_user(u)
     
-    await cb.message.delete() # Удаляем старое фото профиля
+    try:
+        await cb.message.delete() # Безопасное удаление
+    except Exception:
+        pass
+        
     await cb.message.answer(
         f"🎁 <b>Ежедневный вход!</b>\n\n"
         f"🔥 Стрик: {u.daily_streak} дней\n"
@@ -4000,9 +4014,11 @@ async def cb_search(cb: CallbackQuery, state: FSMContext):
         await cb.answer("Ты сейчас в рейде!", show_alert=True)
         return
 
-    if not is_user_ready_full(u):
-        try: await cb.message.delete()
-        except: pass
+    i    # (внутри cb_search)
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
         await cb.message.answer("❌ Сначала заполни анкету (/start).", reply_markup=kb_main())
         return
 
