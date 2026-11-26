@@ -3264,17 +3264,16 @@ async def reg_gender(cb: CallbackQuery, state: FSMContext):
 
 @dp.message(Reg.city)
 async def reg_city(msg: Message, state: FSMContext):
-    c        target_city = standardize_city(u.city)
-        
-        for c in candidates:
-            c_city = standardize_city(c.city)
-            if c_city != target_city:
-                continue
-            # Дальше твоя проверка на схожесть (difflib)...
+    city = (msg.text or "").strip()[:100]
+    if len(city) < 2 or contains_link(city):
+        await msg.answer("❌ Название города — 2–100 символов, без ссылок.")
         return
+        
     u = get_user(msg.from_user.id)
-    u.city = city
+    # СОХРАНЯЕМ ГОРОД В СТАНДАРТИЗИРОВАННОМ ВИДЕ (например, "СПб" -> "санкт-петербург")
+    u.city = standardize_city(city) 
     save_user(u)
+    
     await msg.answer("🌟 <b>Требование к напарнику</b>\nНапиши, кого бы ты хотел найти (до 200 символов).")
     await state.set_state(Reg.mayak)
 
@@ -4112,13 +4111,14 @@ async def find_partner(tg_id: int, mode: str, with_tags: bool):
             query = query.filter(User.age.between(u.age - 2, u.age + 2))
             
         candidates = query.all()
-        target_city = clean_city(u.city)
+        target_city = standardize_city(u.city) # ИСПОЛЬЗУЕМ СТАНДАРТИЗАЦИЮ
         
         for c in candidates:
-            c_city = clean_city(c.city)
+            c_city = standardize_city(c.city)  # ИСПОЛЬЗУЕМ СТАНДАРТИЗАЦИЮ
             
             if mode in ["strict", "city"]:
                 if c_city != target_city:
+                    # Нечеткий поиск для опечаток
                     similarity = difflib.SequenceMatcher(None, target_city, c_city).ratio()
                     if similarity < 0.75:
                         continue
