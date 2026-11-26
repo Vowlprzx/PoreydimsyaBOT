@@ -127,16 +127,15 @@ CITY_ALIASES = {
 }
 
 def standardize_city(text: str) -> str:
-    """Приводит название города к единому виду для поиска."""
-    if not text:
-        return ""
-    # Сначала используем твою функцию clean_city (если она есть), 
-    # чтобы убрать лишние пробелы и привести к нижнему регистру.
-    # Если clean_city нет, можно просто text.lower().strip()
-    city_key = text.lower().strip() 
+    if not text: return ""
+    # Убираем точки, запятые и лишние пробелы (например, "г. Москва" -> "москва")
+    clean_text = text.lower().replace(".", "").replace(",", "").strip()
     
-    # Ищем город в словаре синонимов
-    return CITY_ALIASES.get(city_key, city_key)
+    # Убираем приставки "г " (город)
+    if clean_text.startswith("г "):
+        clean_text = clean_text[2:]
+        
+    return CITY_ALIASES.get(clean_text, clean_text)
 
 CLASS_IMAGES = {
     "Алхимик_female": "AgACAgIAAxkBAAIEUmsCihzfOPQyqU-V1w2MUK3izT6vAALzGmsbLTMYSAwlmHg_n7DkAQADAgADeQADPQQ",
@@ -2976,10 +2975,21 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
     else:
         q = QUIZ[q_idx]
         text = f"🎯 <b>Вопрос {q_idx+1}/{len(QUIZ)}</b>\n\n{q['text']}"
+        
+        # --- РАНДОМИЗАЦИЯ ---
+        options = list(enumerate(q["options"]))
+        random.shuffle(options)
+        
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=opt_text[:60], callback_data=f"quiz_{q_idx}_{i}")]
-            for i, (opt_text, cls) in enumerate(q["options"])
+            [InlineKeyboardButton(text=opt[1][0][:60], callback_data=f"quiz_{q_idx}_{i}")]
+            for i, opt in enumerate(options)
         ])
+        
+        # Сохраняем, под каким индексом сейчас скрывается правильный ответ
+        orig_indices = [opt[0] for opt in options]
+        await state.update_data(quiz_orig_indices=orig_indices)
+        # --------------------
+        
         if isinstance(target, CallbackQuery):
             await target.message.edit_text(text, reply_markup=kb)
         else:
@@ -2999,7 +3009,15 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
         return
         
     scores = st["scores"]
-    cls = QUIZ[q_i]["options"][opt_i][1]
+    
+    data = await state.get_data()
+    orig_indices = data.get("quiz_orig_indices", [])
+    
+    if opt_i >= len(orig_indices):
+        return
+        
+    real_opt_i = orig_indices[opt_i] # Восстанавливаем настоящий индекс
+    cls = QUIZ[q_i]["options"][real_opt_i][1]
     scores[cls] = scores.get(cls, 0) + 1
     
     await send_quiz_question(cb, q_i + 1, scores, state)
@@ -4193,7 +4211,7 @@ async def start_dungeon_with(u: User, partner: User, chat_id: int, msg_id: int):
     await send_dungeon_question(ds_id)
 async def send_dungeon_question(ds_id: int):
     with SessionLocal() as s:
-        ds = s.query(DungeonSession).get(ds_id)
+        ds = s.get(DungeonSession, ds_id)
         if not ds or ds.status != "active":
             return
         theme = DUNGEONS[ds.theme_key]
@@ -4262,7 +4280,7 @@ async def cb_answer(cb: CallbackQuery):
             await resolve_question(ds.id, s)
             
 async def resolve_question(ds_id: int, s):
-    ds = s.query(DungeonSession).get(ds_id)
+    ds = s.get(DungeonSession, ds_id)
     theme = DUNGEONS[ds.theme_key]
     phase = theme["phases"][ds.current_phase - 1]
     q = phase["questions"][ds.current_question]
@@ -4317,7 +4335,7 @@ async def advance_phase(ds_id: int, s=None):
     own = s is None
     if own: s = SessionLocal()
     try:
-        ds = s.query(DungeonSession).get(ds_id)
+        ds = s.get(DungeonSession, ds_id)
         
         # --- ПОКАЗ АНКЕТЫ ПОСЛЕ 1 ФАЗЫ ---
         if ds.current_phase == 1:
@@ -4369,10 +4387,12 @@ async def catch_exchange(msg: Message, state: FSMContext):
 @dp.message(Exchange.msg)
 async def exchange_msg(msg: Message, state: FSMContext):
     text = (msg.text or "").strip()[:100]
-    if not text:
-        await msg.answer("Напиши текст до 100 символов.")
+    
+    # ЗАЩИТА ОТ ХАКА: сообщение должно быть не короче 3 символов и не состоять только из цифр
+    if len(text) < 3 or text.isdigit():
+        await msg.answer("❌ Пожалуйста, напиши что-нибудь осмысленное (минимум 3 символа), а не просто цифры или смайлы.")
         return
-        
+
     with SessionLocal() as s:
         ds = s.query(DungeonSession).filter(
             ((DungeonSession.player1_tg_id == msg.from_user.id) | (DungeonSession.player2_tg_id == msg.from_user.id)) &
@@ -4384,36 +4404,26 @@ async def exchange_msg(msg: Message, state: FSMContext):
             return
             
         is_p1 = ds.player1_tg_id == msg.from_user.id
-        if is_p1:
-            ds.player1_msg = text
-        else:
-            ds.player2_msg = text
-        s.commit()
+        if is_p1: ds.player1_msg = text
+        else: ds.player2_msg = text
         
-        p1_id = ds.player1_tg_id
-        p2_id = ds.player2_tg_id
-        p1_msg = ds.player1_msg
-        p2_msg = ds.player2_msg
-        ds_id = ds.id
-
-    # Сразу очищаем состояние, чтобы не было зависаний
+        ds.msg_stage += 1
+        ds.last_activity = datetime.datetime.utcnow()
+        s.commit()
+        other = ds.player2_tg_id if is_p1 else ds.player1_tg_id
+        
     await state.clear() 
     
-    if p1_msg and p2_msg:
-        # ОБА НАПИСАЛИ - ОТПРАВЛЯЕМ ДРУГ ДРУГУ И ИДЕМ ДАЛЬШЕ
-        try:
-            await bot.send_message(p1_id, f"💬 Сообщение от напарника:\n\n<b>{p2_msg}</b>")
-            await bot.send_message(p2_id, f"💬 Сообщение от напарника:\n\n<b>{p1_msg}</b>")
-        except Exception:
-            pass
-        await send_dungeon_question(ds_id)
+    if ds.msg_stage >= 3:
+        try: await bot.send_message(other, f"💬 Сообщение от напарника:\n\n{text}")
+        except Exception: pass
+        await send_dungeon_question(ds.id)
     else:
-        # НАПИСАЛ ТОЛЬКО ОДИН
         await msg.answer("✅ Отправлено! Ждём ответ напарника.")
 
 # ========== ФИНАЛ ==========
 async def finish_dungeon(ds_id: int, s):
-    ds = s.query(DungeonSession).get(ds_id)
+    ds = s.get(DungeonSession, ds_id)
     total = ds.phase1_matches + ds.phase2_matches + ds.phase3_matches
     ratio = total / 11
     
