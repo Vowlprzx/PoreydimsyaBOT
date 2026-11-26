@@ -4014,7 +4014,6 @@ async def cb_search(cb: CallbackQuery, state: FSMContext):
         await cb.answer("Ты сейчас в рейде!", show_alert=True)
         return
 
-    i    # (внутри cb_search)
     try:
         await cb.message.delete()
     except Exception:
