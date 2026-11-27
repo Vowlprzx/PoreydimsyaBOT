@@ -2992,25 +2992,21 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
 
 @dp.callback_query(F.data.startswith("quiz_"))
 async def cb_quiz(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     _, q_s, opt_s = cb.data.split("_")
     q_i, opt_i = int(q_s), int(opt_s)
-    st = QUIZ_SCORES.get(cb.from_user.id)
     
-    if not st or st["idx"] != q_i:
-        await cb.answer("Устарело, начни заново", show_alert=True)
-        return
-        
     data = await state.get_data()
+    current_q = data.get("current_quiz_q", -1)
     orig_indices = data.get("quiz_orig_indices", [])
+    scores = data.get("quiz_scores", {c: 0 for c in ALL_BASE_CLASSES})
     
-    if opt_i >= len(orig_indices):
-        await cb.answer("Устарело, начни заново", show_alert=True)
+    # Если память бота сбросилась (например, из-за перезагрузки Bothost)
+    if current_q != q_i or opt_i >= len(orig_indices):
+        await cb.message.answer("⚠️ Похоже, бот перезагрузился. Давай продолжим квиз!")
+        await send_quiz_question(cb, q_i, scores, state)
         return
         
-    # Если всё ок, только теперь убираем "часики" с кнопки
-    await cb.answer()
-    
-    scores = st["scores"]
     real_opt_i = orig_indices[opt_i]
     cls = QUIZ[q_i]["options"][real_opt_i][1]
     scores[cls] = scores.get(cls, 0) + 1
