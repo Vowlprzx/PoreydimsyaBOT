@@ -3022,7 +3022,7 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
     cls = QUIZ[q_i]["options"][real_opt_i][1]
     scores[cls] = scores.get(cls, 0) + 1
     
-    await send_quiz_question(cb, q_i + 1, scores, state))
+    await send_quiz_question(cb, q_i + 1, scores, state)
 
 # ========== ТЕГИ ==========
 TAG_QUESTIONS = [
