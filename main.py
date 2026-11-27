@@ -2942,14 +2942,7 @@ QUIZ = [
     },
 ]
 
-QUIZ_SCORES = {}
-
-def _uid_from(target) -> int:
-    if isinstance(target, CallbackQuery):
-        return target.from_user.id
-    if target.from_user:
-        return target.from_user.id
-    return target.chat.id
+#удалил QUIZ_SCORES = {}
 
 async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSMContext = None):
     _uid = _uid_from(target)
@@ -3684,8 +3677,12 @@ def _uid_from(target) -> int:
 
 async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSMContext = None):
     _uid = _uid_from(target)
+    
     if scores is None:
-        scores = {c: 0 for c in ALL_BASE_CLASSES}
+        data = await state.get_data()
+        scores = data.get("quiz_scores", {c: 0 for c in ALL_BASE_CLASSES})
+    else:
+        await state.update_data(quiz_scores=scores)
         
     if q_idx >= len(QUIZ):
         cls_name, cls_desc = get_hybrid_class(scores)
@@ -3698,23 +3695,33 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
                 await target.message.edit_text(text)
             else:
                 await target.answer(text)
-            QUIZ_SCORES.pop(_uid, None)
-            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=False)
+            
+            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=False, quiz_scores=scores)
             await send_tag_question(target, state)
-        else:
-            QUIZ_SCORES.pop(_uid, None)
     else:
         q = QUIZ[q_idx]
         text = f"🎯 <b>Вопрос {q_idx+1}/{len(QUIZ)}</b>\n\n{q['text']}"
+        
+        options = list(enumerate(q["options"]))
+        random.shuffle(options)
+        
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=opt_text[:60], callback_data=f"quiz_{q_idx}_{i}")]
-            for i, (opt_text, cls) in enumerate(q["options"])
+            [InlineKeyboardButton(text=opt[1][0][:60], callback_data=f"quiz_{q_idx}_{i}")]
+            for i, opt in enumerate(options)
         ])
+        
+        orig_indices = [opt[0] for opt in options]
+        # Сохраняем в память бота: текущий вопрос, перемешанные индексы и баллы
+        await state.update_data(
+            quiz_orig_indices=orig_indices, 
+            current_quiz_q=q_idx, 
+            quiz_scores=scores
+        )
+        
         if isinstance(target, CallbackQuery):
             await target.message.edit_text(text, reply_markup=kb)
         else:
             await target.answer(text, reply_markup=kb)
-        QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
 
 
 @dp.callback_query(F.data.startswith("quiz_"))
@@ -3981,16 +3988,21 @@ async def cb_rf_ok(cb: CallbackQuery, state: FSMContext):
         # Если картинки нет (или произошла ошибка) — шлем текст, как раньше
         await cb.message.edit_text("🎉 Регистрация завершена! Открываю профиль...")
         await bot.send_message(cb.from_user.id, render_profile(u), reply_markup=kb_main())
-
-QUIZ_SCORES = {}
 def _uid_from(target) -> int:
-    if isinstance(target, CallbackQuery): return target.from_user.id
-    if target.from_user: return target.from_user.id
+    if isinstance(target, CallbackQuery):
+        return target.from_user.id
+    if target.from_user:
+        return target.from_user.id
     return target.chat.id
 
 async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSMContext = None):
     _uid = _uid_from(target)
-    if scores is None: scores = {c: 0 for c in ALL_BASE_CLASSES}
+    
+    if scores is None:
+        data = await state.get_data()
+        scores = data.get("quiz_scores", {c: 0 for c in ALL_BASE_CLASSES})
+    else:
+        await state.update_data(quiz_scores=scores)
         
     if q_idx >= len(QUIZ):
         cls_name, cls_desc = get_hybrid_class(scores)
@@ -3999,21 +4011,64 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
             u.class_name = cls_name
             save_user(u)
             text = f"🎉 Твой класс: <b>{cls_name}</b>\n\n{cls_desc}\n\nТеперь выбери свои интересы (теги)."
-            if isinstance(target, CallbackQuery): await target.message.edit_text(text)
-            else: await target.answer(text)
-            QUIZ_SCORES.pop(_uid, None)
-            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=False)
+            if isinstance(target, CallbackQuery):
+                await target.message.edit_text(text)
+            else:
+                await target.answer(text)
+            
+            await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=False, quiz_scores=scores)
             await send_tag_question(target, state)
-        else:
-            QUIZ_SCORES.pop(_uid, None)
     else:
         q = QUIZ[q_idx]
         text = f"🎯 <b>Вопрос {q_idx+1}/{len(QUIZ)}</b>\n\n{q['text']}"
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=opt[:60], callback_data=f"quiz_{q_idx}_{i}")] for i, (opt, _) in enumerate(q["options"])])
-        if isinstance(target, CallbackQuery): await target.message.edit_text(text, reply_markup=kb)
-        else: await target.answer(text, reply_markup=kb)
-        QUIZ_SCORES[_uid] = {"idx": q_idx, "scores": scores}
+        
+        options = list(enumerate(q["options"]))
+        random.shuffle(options)
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=opt[1][0][:60], callback_data=f"quiz_{q_idx}_{i}")]
+            for i, opt in enumerate(options)
+        ])
+        
+        orig_indices = [opt[0] for opt in options]
+        await state.update_data(
+            quiz_orig_indices=orig_indices, 
+            current_quiz_q=q_idx, 
+            quiz_scores=scores
+        )
+        
+        if isinstance(target, CallbackQuery):
+            await target.message.edit_text(text, reply_markup=kb)
+        else:
+            await target.answer(text, reply_markup=kb)
 
+@dp.callback_query(F.data.startswith("quiz_"))
+async def cb_quiz(cb: CallbackQuery, state: FSMContext):
+    _, q_s, opt_s = cb.data.split("_")
+    q_i, opt_i = int(q_s), int(opt_s)
+    
+    data = await state.get_data()
+    current_q = data.get("current_quiz_q", -1)
+    
+    if current_q != q_i:
+        await cb.answer("Устарело, начни заново", show_alert=True)
+        return
+        
+    orig_indices = data.get("quiz_orig_indices", [])
+    scores = data.get("quiz_scores", {c: 0 for c in ALL_BASE_CLASSES})
+    
+    if opt_i >= len(orig_indices):
+        await cb.answer("Устарело, начни заново", show_alert=True)
+        return
+        
+    await cb.answer()
+    
+    real_opt_i = orig_indices[opt_i]
+    cls = QUIZ[q_i]["options"][real_opt_i][1]
+    scores[cls] = scores.get(cls, 0) + 1
+    
+    await send_quiz_question(cb, q_i + 1, scores, state)
+    
 @dp.callback_query(F.data.startswith("quiz_"))
 async def cb_quiz(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
