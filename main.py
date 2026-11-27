@@ -2778,8 +2778,8 @@ class Partnership(Base):
     games_count = Column(Integer, default=0)
     last_played_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-#Base.metadata.drop_all(engine)
-#Base.metadata.create_all(engine)
+Base.metadata.drop_all(engine)
+Base.metadata.create_all(engine)
 
 # ========== УТИЛИТЫ ==========
 def calculate_level(exp):
@@ -3106,8 +3106,8 @@ def kb_edit():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Ник", callback_data="edit_nickname"), InlineKeyboardButton(text="Возраст", callback_data="edit_age")],
         [InlineKeyboardButton(text="Город", callback_data="edit_city"), InlineKeyboardButton(text="Требование", callback_data="edit_mayak")],
+        [InlineKeyboardButton(text="Пол", callback_data="edit_gender")],
         [InlineKeyboardButton(text="Теги", callback_data="edit_tags"), InlineKeyboardButton(text="Рэд флаги", callback_data="edit_borders")],
-        [InlineKeyboardButton(text="🎯 Пройти квиз на класс", callback_data="edit_quiz")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_profile")],
     ])
 
@@ -3199,12 +3199,42 @@ def render_profile(u: User) -> str:
 async def cmd_start(msg: Message, state: FSMContext):
     await state.clear()
     u = get_user(msg.from_user.id)
+    
     if u and u.consent_given:
-        await msg.answer(
-            f"👋 С возвращением, <b>{u.username}</b>!\n\n{render_profile(u)}",
-            reply_markup=kb_main(),
-        )
+        # Проверяем, заполнена ли анкета
+        if not is_user_ready_full(u):
+            if u.class_name == "🎭 Странник":
+                await msg.answer("🎯 Твоя анкета не завершена. Давай пройдем квиз на класс (5 вопросов)!")
+                await send_quiz_question(msg, 0, {c: 0 for c in ALL_BASE_CLASSES}, state)
+                return
+            elif not u.age:
+                await msg.answer("🎂 Сколько тебе лет? (только число)")
+                await state.set_state(Reg.age)
+                return
+            elif not u.city:
+                await msg.answer("🏙️ Из какого ты города?")
+                await state.set_state(Reg.city)
+                return
+            elif not u.mayak:
+                await msg.answer("🌟 <b>Требование к напарнику</b>\nНапиши, кого бы ты хотел найти (до 200 символов).")
+                await state.set_state(Reg.mayak)
+                return
+        
+        # Если всё заполнено - показываем профиль
+        text = render_profile(u)
+        clean_class_name = u.class_name.split(" ")[-1]
+        gender_str = u.gender if u.gender else "male"
+        img_key = f"{clean_class_name}_{gender_str}"
+        
+        if img_key in CLASS_IMAGES:
+            try:
+                await bot.send_photo(chat_id=msg.from_user.id, photo=CLASS_IMAGES[img_key], caption=text, reply_markup=kb_main())
+                return
+            except Exception:
+                pass
+        await msg.answer(text, reply_markup=kb_main())
         return
+        
     await msg.answer(
         "👋 Привет! Это бот <b>«Порейдимся»</b> — знакомства в стиле RPG.\n\n"
         "Прежде чем начать, нужно согласие на обработку персональных данных "
@@ -3214,29 +3244,6 @@ async def cmd_start(msg: Message, state: FSMContext):
         reply_markup=kb_consent(),
     )
     await state.set_state(Reg.consent)
-
-@dp.callback_query(F.data == "consent_yes", Reg.consent)
-async def cb_consent(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()
-    with SessionLocal() as s:
-        u = s.query(User).filter_by(tg_id=cb.from_user.id).first()
-        if not u:
-            count = s.query(User).count()
-            u = User(
-                tg_id=cb.from_user.id,
-                username=cb.from_user.username or f"user_{cb.from_user.id}",
-                tg_username=cb.from_user.username,
-                class_name="🎭 Странник",
-                consent_given=True,
-                is_18plus=True,
-                is_pioneer=(count < 1000)
-            )
-            s.add(u)
-        else:
-            u.consent_given = True
-        s.commit()
-    await cb.message.edit_text("✅ Согласие получено.\n\nКак тебя зовут? Введи ник (2–20 символов).")
-    await state.set_state(Reg.nickname)
 
 # ========== РЕГИСТРАЦИЯ ==========
 @dp.message(Reg.nickname)
@@ -3461,13 +3468,6 @@ async def cb_edit(cb: CallbackQuery):
 async def cb_edit_field(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     field = cb.data.split("_", 1)[1]
-    
-    if field == "quiz":
-        await state.update_data(is_editing=True)
-        await cb.message.delete()
-        await cb.message.answer("🎯 Запускаю квиз на класс (5 вопросов).")
-        await send_quiz_question(cb, 0, {c: 0 for c in ALL_BASE_CLASSES}, state)
-        return
 
     if field == "tags":
         await state.update_data(tag_cat=0, tag_chosen=[], all_tags=[], is_editing=True)
@@ -4553,6 +4553,22 @@ async def do_broadcast(msg: Message, state: FSMContext):
             
     await state.clear()
     await msg.answer(f"✅ Рассылка завершена! Успешно доставлено: {success} из {len(user_ids)}.")
+
+# ========== ЛОВУШКА ДЛЯ ЛЮБЫХ СООБЩЕНИЙ ==========
+@dp.message(F.text | F.photo)
+async def catch_all_messages(msg: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is not None:
+        return # Если человек в процессе регистрации или рейда - не мешаем
+        
+    u = get_user(msg.from_user.id)
+    if u and u.consent_given:
+        if is_user_ready_full(u):
+            await msg.answer("🤔 Не понимаю тебя. Вот главное меню:", reply_markup=kb_main())
+        else:
+            await msg.answer("Давай сначала закончим анкету. Нажми /start")
+    else:
+        await msg.answer("Нажми /start, чтобы начать.")
     
     
 # ========== ВЕБ-СЕРВЕР И ЗАПУСК ==========
