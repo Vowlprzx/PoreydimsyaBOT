@@ -3439,17 +3439,24 @@ async def cmd_reset(msg: Message, state: FSMContext):
     await state.clear()
     await msg.answer("🔄 Состояние сброшено. Нажми /start", reply_markup=kb_main())
 
-@dp.message(Command("delete_me"))
-async def cmd_delete_me(msg: Message):
+@dp.callback_query(F.data == "menu_delete")
+async def cb_delete(cb: CallbackQuery):
+    await cb.answer()
     with SessionLocal() as s:
-        s.query(UserTag).filter_by(user_id=msg.from_user.id).delete()
-        s.query(User).filter_by(tg_id=msg.from_user.id).delete()
+        s.query(UserTag).filter_by(user_id=cb.from_user.id).delete()
+        s.query(User).filter_by(tg_id=cb.from_user.id).delete()
         s.query(DungeonSession).filter(
-            (DungeonSession.player1_tg_id == msg.from_user.id) |
-            (DungeonSession.player2_tg_id == msg.from_user.id)
+            (DungeonSession.player1_tg_id == cb.from_user.id) |
+            (DungeonSession.player2_tg_id == cb.from_user.id)
         ).delete(synchronize_session=False)
         s.commit()
-    await msg.answer("🗑 Все твои данные удалены. Напиши /start, чтобы начать заново.")
+        
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
+        
+    await cb.message.answer("🗑 Все твои данные удалены. Напиши /start, чтобы начать заново.")
 
 @dp.message(Command("support"))
 async def cmd_support(msg: Message):
