@@ -2999,7 +2999,6 @@ async def send_quiz_question(target, q_idx: int, scores: dict = None, state: FSM
 
 @dp.callback_query(F.data.startswith("quiz_"))
 async def cb_quiz(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()
     _, q_s, opt_s = cb.data.split("_")
     q_i, opt_i = int(q_s), int(opt_s)
     st = QUIZ_SCORES.get(cb.from_user.id)
@@ -3008,8 +3007,6 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
         await cb.answer("Устарело, начни заново", show_alert=True)
         return
         
-    scores = st["scores"]
-    
     data = await state.get_data()
     orig_indices = data.get("quiz_orig_indices", [])
     
@@ -3017,11 +3014,15 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
         await cb.answer("Устарело, начни заново", show_alert=True)
         return
         
+    # Если всё ок, только теперь убираем "часики" с кнопки
+    await cb.answer()
+    
+    scores = st["scores"]
     real_opt_i = orig_indices[opt_i]
     cls = QUIZ[q_i]["options"][real_opt_i][1]
     scores[cls] = scores.get(cls, 0) + 1
     
-    await send_quiz_question(cb, q_i + 1, scores, state)
+    await send_quiz_question(cb, q_i + 1, scores, state))
 
 # ========== ТЕГИ ==========
 TAG_QUESTIONS = [
@@ -4569,6 +4570,15 @@ async def catch_all_messages(msg: Message, state: FSMContext):
             await msg.answer("Давай сначала закончим анкету. Нажми /start")
     else:
         await msg.answer("Нажми /start, чтобы начать.")
+        
+        # ========== ЗАЩИТА ОТ ТЕКСТА В МЕНЮ ==========
+@dp.message(Reg.tags, F.text)
+async def catch_tags_text(msg: Message):
+    await msg.answer("👆 Пожалуйста, выбери тег с помощью кнопок выше и нажми «➡️ Дальше».")
+
+@dp.message(Reg.red_flags, F.text)
+async def catch_rf_text(msg: Message):
+    await msg.answer("👆 Пожалуйста, выбери Рэд-флаги с помощью кнопок и нажми «✅ Готово».")
     
     
 # ========== ВЕБ-СЕРВЕР И ЗАПУСК ==========
