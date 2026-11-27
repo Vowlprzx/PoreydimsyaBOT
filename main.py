@@ -3014,9 +3014,10 @@ async def cb_quiz(cb: CallbackQuery, state: FSMContext):
     orig_indices = data.get("quiz_orig_indices", [])
     
     if opt_i >= len(orig_indices):
+        await cb.answer("Устарело, начни заново", show_alert=True)
         return
         
-    real_opt_i = orig_indices[opt_i] # Восстанавливаем настоящий индекс
+    real_opt_i = orig_indices[opt_i]
     cls = QUIZ[q_i]["options"][real_opt_i][1]
     scores[cls] = scores.get(cls, 0) + 1
     
@@ -4024,6 +4025,10 @@ async def cb_search(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     u = get_user(cb.from_user.id)
     
+    if not u:
+        await cb.message.answer("❌ Сначала заполни анкету (/start).")
+        return
+        
     if u.status == "searching":
         await cb.answer("Уже в поиске!", show_alert=True)
         return
@@ -4032,10 +4037,11 @@ async def cb_search(cb: CallbackQuery, state: FSMContext):
         await cb.answer("Ты сейчас в рейде!", show_alert=True)
         return
 
-    try:
-        await cb.message.delete()
-    except Exception:
-        pass
+    if not is_user_ready_full(u):
+        try:
+            await cb.message.delete()
+        except Exception:
+            pass
         await cb.message.answer("❌ Сначала заполни анкету (/start).", reply_markup=kb_main())
         return
 
@@ -4044,14 +4050,14 @@ async def cb_search(cb: CallbackQuery, state: FSMContext):
 
     try:
         await cb.message.delete()
-    except: pass
+    except Exception:
+        pass
 
     msg = await cb.message.answer(
         "🔍 <b>Ищем напарника...</b>\n\nСтрогий поиск (город, возраст, интересы). Ждём 10 секунд...",
         reply_markup=kb_cancel_search()
     )
     
-    # ВОТ ЭТА СТРОЧКА ЗАПУСКАЕТ ПОИСК
     asyncio.create_task(search_process(u.tg_id, msg.chat.id, msg.message_id))
 
 
